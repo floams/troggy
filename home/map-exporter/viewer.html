@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>map-exporter viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #0b0b12;
+    color: #e9e9f2;
+    font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    background: #14141f;
+    border-bottom: 1px solid #262636;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0 10px 0 0; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: #b9bcce; }
+  .btn {
+    appearance: none;
+    border: 1px solid #33334a;
+    background: #1b1b29;
+    color: #e9e9f2;
+    font: inherit;
+    font-size: 13px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .btn:hover { background: #24243a; }
+  .btn:active { background: #2c2c46; }
+  .search {
+    flex: 1 1 220px;
+    min-width: 160px;
+    max-width: 420px;
+    background: #10101a;
+    border: 1px solid #33334a;
+    border-radius: 7px;
+    color: #e9e9f2;
+    font: inherit;
+    font-size: 13px;
+    padding: 5px 10px;
+  }
+  .search:focus { outline: 1px solid #5b6ee1; border-color: #5b6ee1; }
+  .stats { color: #8f93aa; font-size: 12px; white-space: nowrap; }
+  .spacer { flex: 1; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; overflow: hidden; background: #07070c; }
+  #map { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
+  #map.panning { cursor: grabbing; }
+  #panel {
+    width: 320px;
+    flex: 0 0 320px;
+    border-left: 1px solid #262636;
+    background: #10101a;
+    padding: 14px;
+    overflow-y: auto;
+  }
+  #panel h2 { font-size: 15px; margin: 0 0 2px; word-break: break-word; }
+  #panel .sub { color: #8f93aa; font-size: 12px; margin-bottom: 12px; word-break: break-word; }
+  #panel .block { margin: 12px 0; }
+  #panel .label { color: #8f93aa; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 4px; }
+  #panel .note {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #161624;
+    border: 1px solid #262636;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  #panel .muted { color: #7c8095; font-size: 13px; }
+  .chip {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 7px;
+    margin: 0 5px 5px 0;
+    border-radius: 999px;
+    border: 1px solid #33334a;
+    color: #d5d7e4;
+  }
+  .link {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    color: #9fb0ff;
+    font: inherit;
+    font-size: 13px;
+    padding: 2px 0;
+    cursor: pointer;
+  }
+  .link:hover { text-decoration: underline; }
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 30px;
+    pointer-events: none;
+    gap: 4px;
+  }
+  #empty h2 { font-size: 18px; margin: 0; color: #d9dbeb; }
+  #empty p { margin: 4px 0; color: #8f93aa; max-width: 520px; }
+  #empty code { background: #161624; border: 1px solid #262636; border-radius: 5px; padding: 1px 5px; color: #cfd3ea; }
+  #empty[hidden] { display: none; }
+  #legend {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: #8f93aa;
+    background: rgba(11, 11, 18, .78);
+    border: 1px solid #23233a;
+    border-radius: 8px;
+    padding: 6px 10px;
+    pointer-events: none;
+  }
+  #legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  #hint {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    font-size: 11px;
+    color: #6f7388;
+    pointer-events: none;
+  }
+  #dropping {
+    position: fixed;
+    inset: 0;
+    border: 2px dashed #5b6ee1;
+    background: rgba(30, 40, 90, .35);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #dfe3ff;
+    z-index: 10;
+    pointer-events: none;
+  }
+  body.dragging #dropping { display: flex; }
+  @media (max-width: 760px) {
+    #panel { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>map-exporter viewer</h1>
+  <label class="btn">Open file
+    <input id="file" type="file" accept=".txt,.json,.jsonl,text/plain,application/json" hidden>
+  </label>
+  <input id="search" class="search" type="search" placeholder="search dreams, notes, place ids">
+  <span id="stats" class="stats"></span>
+  <span class="spacer"></span>
+  <button id="fit" class="btn" type="button">Fit</button>
+  <button id="svg" class="btn" type="button">Download SVG</button>
+  <button id="png" class="btn" type="button">Download PNG</button>
+</header>
+
+<main>
+  <div id="stage">
+    <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="empty">
+      <h2>drop your map export here</h2>
+      <p>run <code>map-exporter.lua</code> in your executor, then drag <code>workspace/map-export.txt</code> onto this page or open it with the button above.</p>
+      <p>a <code>.json</code> file with the same element data works too.</p>
+    </div>
+    <div id="legend"></div>
+    <div id="hint">drag to pan &middot; scroll to zoom &middot; drag nodes to move &middot; click a node for notes</div>
+  </div>
+  <aside id="panel"></aside>
+</main>
+<div id="dropping">drop map-export.txt or .json</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var BASE_W = 1600;
+  var BASE_H = 1000;
+  var PAD = 90;
+  var NODE_W = 150;
+  var NODE_H = 62;
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  var MARKERS = {
+    1: { name: "DeadEnd", color: "#4ade80" },
+    2: { name: "Badge", color: "#c084fc" },
+    3: { name: "AltExit", color: "#fb923c" }
+  };
+
+  var state = {
+    elements: [],
+    byExport: new Map(),
+    selected: null,
+    query: "",
+    view: { x: 0, y: 0, k: 1 },
+    meta: { placeId: "", placeName: "", exportedAt: "" }
+  };
+
+  var dom = {};
+
+  function svgNode(tag, attrs, parent) {
+    var node = document.createElementNS(SVG_NS, tag);
+    if (attrs) {
+      for (var key in attrs) {
+        if (Object.prototype.hasOwnProperty.call(attrs, key) && attrs[key] !== null && attrs[key] !== undefined) {
+          node.setAttribute(key, String(attrs[key]));
+        }
+      }
+    }
+    if (parent) {
+      parent.appendChild(node);
+    }
+    return node;
+  }
+
+  function clamp01(value) {
+    if (!isFinite(value)) {
+      return 0.5;
+    }
+    return Math.min(1, Math.max(0, value));
+  }
+
+  function toColor(value) {
+    if (!Array.isArray(value) || value.length < 3) {
+      return "#b9bcc9";
+    }
+    var parts = value.slice(0, 3).map(function (channel) {
+      var number = Number(channel);
+      if (!isFinite(number)) {
+        return 0;
+      }
+      if (number <= 1) {
+        number = Math.round(number * 255);
+      }
+      return Math.min(255, Math.max(0, Math.round(number)));
+    });
+    return "rgb(" + parts.join(", ") + ")";
+  }
+
+  function wrap(name, limit) {
+    var words = String(name || "").split(/\s+/).filter(Boolean);
+    if (words.length === 0) {
+      return [""];
+    }
+    var lines = [];
+    var current = "";
+    words.forEach(function (word) {
+      var candidate = current ? current + " " + word : word;
+      if (candidate.length > limit && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    });
+    if (current) {
+      lines.push(current);
+    }
+    if (lines.length > 2) {
+      lines = [lines[0], lines.slice(1).join(" ")];
+    }
+    if (lines[1] && lines[1].length > limit + 2) {
+      lines[1] = lines[1].slice(0, limit + 1) + "\u2026";
+    }
+    return lines;
+  }
+
+  function normalize(list, indexes) {
+    var elements = [];
+
+    list.forEach(function (entry, position) {
+      var element = entry || {};
+      var scale = Array.isArray(element.ScalePosition) ? element.ScalePosition : [0.5, 0.5];
+      var markers = Array.isArray(element.Markers)
+        ? element.Markers.map(Number).filter(function (id) { return !!MARKERS[id]; })
+        : [];
+
+      elements.push({
+        exportIndex: indexes ? indexes[position] : position + 1,
+        placeId: element.PlaceId === undefined || element.PlaceId === null ? "" : element.PlaceId,
+        name: typeof element.Name === "string" ? element.Name : "",
+        note: typeof element.Note === "string" ? element.Note : "",
+        image: typeof element.ImageId === "string" ? element.ImageId : "",
+        markers: markers,
+        color: toColor(element.Color),
+        x: clamp01(Number(scale[0])),
+        y: clamp01(Number(scale[1])),
+        exits: Array.isArray(element.Exits)
+          ? element.Exits.map(Number).filter(function (id) { return isFinite(id); })
+          : []
+      });
+    });
+
+    return elements;
+  }
+
+  function parseExport(text) {
+    if (typeof text !== "string") {
+      return null;
+    }
+    var raw = text.replace(/^\uFEFF/, "").trim();
+    if (!raw) {
+      return null;
+    }
+
+    if (raw.charAt(0) === "{" || raw.charAt(0) === "[") {
+      try {
+        var data = JSON.parse(raw);
+        if (Array.isArray(data)) {
+          return data.length ? normalize(data) : null;
+        }
+        if (data && Array.isArray(data.elements)) {
+          return data.elements.length ? normalize(data.elements) : null;
+        }
+        if (data && Array.isArray(data.map)) {
+          return data.map.length ? normalize(data.map) : null;
+        }
+      } catch (error) {
+        /* fall through to the txt parser */
+      }
+    }
+
+    var lines = raw.split(/\r?\n/);
+    var entries = [];
+    var indexes = [];
+    var failed = 0;
+
+    lines.forEach(function (line) {
+      var match = line.match(/^\s*\[(\d+)\]\s*(\{.*\})\s*$/);
+      if (!match) {
+        return;
+      }
+      try {
+        entries.push(JSON.parse(match[2]));
+        indexes.push(Number(match[1]));
+      } catch (error) {
+        failed += 1;
+      }
+    });
+
+    if (!entries.length) {
+      return null;
+    }
+
+    return normalize(entries, indexes);
+  }
+
+  function readMeta(text) {
+    var meta = { placeId: "", placeName: "", exportedAt: "" };
+    var place = text.match(/^place:\s*(\d+)\s*\((.*)\)\s*$/m);
+    if (place) {
+      meta.placeId = place[1];
+      meta.placeName = place[2];
+    }
+    var exported = text.match(/^exported:\s*(.+)$/m);
+    if (exported) {
+      meta.exportedAt = exported[1].trim();
+    }
+    return meta;
+  }
+
+  function setData(elements, meta) {
+    state.elements = elements;
+    state.byExport = new Map(elements.map(function (element) { return [element.exportIndex, element]; }));
+    state.selected = null;
+    state.query = "";
+    state.meta = meta || { placeId: "", placeName: "", exportedAt: "" };
+    state.elements.forEach(function (element) {
+      element._px = null;
+      element._py = null;
+    });
+
+    dom.search.value = "";
+    dom.empty.hidden = elements.length > 0;
+    render();
+    renderPanel();
+    fit();
+    return getStats();
+  }
+
+  function loadText(text) {
+    var elements = parseExport(text);
+    if (!elements) {
+      return null;
+    }
+    return setData(elements, readMeta(text));
+  }
+
+  function getStats() {
+    var connections = 0;
+    var markers = 0;
+    var notes = 0;
+    state.elements.forEach(function (element) {
+      connections += element.exits.filter(function (id) { return state.byExport.has(id); }).length;
+      markers += element.markers.length;
+      if (element.note) {
+        notes += 1;
+      }
+    });
+    return {
+      elements: state.elements.length,
+      connections: connections,
+      markers: markers,
+      notes: notes
+    };
+  }
+
+  function worldPos(element) {
+    if (element._px !== null && element._py !== null) {
+      return { x: element._px, y: element._py };
+    }
+    return {
+      x: PAD + element.x * (BASE_W - PAD * 2),
+      y: PAD + element.y * (BASE_H - PAD * 2)
+    };
+  }
+
+  function arrowDefs() {
+    return '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+      + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#8b8fa3"></path></marker></defs>';
+  }
+
+  function edgePath(from, to) {
+    if (from === to) {
+      var top = from.y - NODE_H / 2;
+      return "M " + from.x + " " + top
+        + " C " + (from.x + 70) + " " + (top - 90) + " "
+        + (from.x - 70) + " " + (top - 90) + " "
+        + from.x + " " + top;
+    }
+
+    var dx = to.x - from.x;
+    var dy = to.y - from.y;
+    var length = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / length;
+    var uy = dy / length;
+    var toHorizontalEdge = Math.abs(ux) < 1e-6 ? Infinity : (NODE_W / 2 + 6) / Math.abs(ux);
+    var toVerticalEdge = Math.abs(uy) < 1e-6 ? Infinity : (NODE_H / 2 + 6) / Math.abs(uy);
+    var trim = Math.min(toHorizontalEdge, toVerticalEdge, length * 0.9);
+    var endX = to.x - ux * trim;
+    var endY = to.y - uy * trim;
+
+    return "M " + from.x + " " + from.y + " L " + endX + " " + endY;
+  }
+
+  function render() {
+    if (!dom.world) {
+      return;
+    }
+
+    var width = dom.stage.clientWidth || 1200;
+    var height = dom.stage.clientHeight || 800;
+
+    dom.svg.setAttribute("width", width);
+    dom.svg.setAttribute("height", height);
+    dom.svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    dom.world.setAttribute(
+      "transform",
+      "translate(" + state.view.x + " " + state.view.y + ") scale(" + state.view.k + ")"
+    );
+
+    while (dom.world.firstChild) {
+      dom.world.removeChild(dom.world.firstChild);
+    }
+
+    var query = state.query.trim().toLowerCase();
+
+    state.elements.forEach(function (source) {
+      source.exits.forEach(function (exitIndex) {
+        var target = state.byExport.get(exitIndex);
+        if (!target) {
+          return;
+        }
+        svgNode("path", {
+          class: "edge",
+          d: edgePath(worldPos(source), worldPos(target)),
+          fill: "none",
+          stroke: "#8b8fa3",
+          "stroke-width": 2,
+          "marker-end": "url(#arrow)"
+        }, dom.world);
+      });
+    });
+
+    state.elements.forEach(function (element) {
+      var position = worldPos(element);
+      var matches = query !== "" && haystack(element).indexOf(query) !== -1;
+
+      var group = svgNode("g", {
+        class: "node" + (state.selected === element.exportIndex ? " selected" : "") + (matches ? " match" : ""),
+        transform: "translate(" + position.x + " " + position.y + ")",
+        "data-index": element.exportIndex
+      }, dom.world);
+
+      svgNode("rect", {
+        x: -NODE_W / 2,
+        y: -NODE_H / 2,
+        width: NODE_W,
+        height: NODE_H,
+        rx: 12,
+        fill: "#f4f4f8",
+        stroke: element.color,
+        "stroke-width": 4
+      }, group);
+
+      svgNode("text", {
+        x: 0,
+        y: 5,
+        "text-anchor": "middle",
+        "font-family": "Segoe UI, Roboto, sans-serif",
+        "font-size": 13,
+        fill: "#3c3f52",
+        "font-weight": 600
+      }, group).textContent = String(element.placeId || "?");
+
+      var lines = wrap(element.name, 22);
+      lines.forEach(function (line, index) {
+        svgNode("text", {
+          x: 0,
+          y: NODE_H / 2 + 20 + index * 16,
+          "text-anchor": "middle",
+          "font-family": "Segoe UI, Roboto, sans-serif",
+          "font-size": 14,
+          fill: "#f1f2f6",
+          "font-weight": 600,
+          stroke: "#0b0b12",
+          "stroke-width": 5,
+          "stroke-linejoin": "round",
+          "paint-order": "stroke"
+        }, group).textContent = line;
+      });
+
+      element.markers.forEach(function (markerId, index) {
+        var info = MARKERS[markerId];
+        if (!info) {
+          return;
+        }
+        svgNode("rect", {
+          x: NODE_W / 2 - 20 - index * 17,
+          y: -NODE_H / 2 + 7,
+          width: 12,
+          height: 12,
+          rx: 3,
+          fill: info.color,
+          stroke: "#0b0b12",
+          "stroke-width": 1.5
+        }, group);
+      });
+
+      svgNode("rect", {
+        x: -NODE_W / 2,
+        y: -NODE_H / 2,
+        width: NODE_W,
+        height: NODE_H + 42,
+        fill: "transparent"
+      }, group);
+
+      svgNode("rect", {
+        class: "ring",
+        x: -NODE_W / 2 - 6,
+        y: -NODE_H / 2 - 6,
+        width: NODE_W + 12,
+        height: NODE_H + 12,
+        rx: 16,
+        fill: "none",
+        stroke: "#ffffff",
+        "stroke-width": 2,
+        "stroke-dasharray": "6 5"
+      }, group);
+
+      attachNodeEvents(group, element);
+    });
+
+    updateStats();
+  }
+
+  function haystack(element) {
+    return [
+      element.name,
+      String(element.placeId),
+      element.note,
+      element.markers.map(function (id) { return MARKERS[id] ? MARKERS[id].name : ""; }).join(" ")
+    ].join(" ").toLowerCase();
+  }
+
+  function updateStats() {
+    var stats = getStats();
+    dom.stats.textContent = stats.elements + " elements \u00b7 " + stats.connections + " connections";
+    if (state.query.trim() !== "") {
+      var matches = state.elements.filter(function (element) {
+        return haystack(element).indexOf(state.query.trim().toLowerCase()) !== -1;
+      }).length;
+      dom.stats.textContent += " \u00b7 " + matches + " match" + (matches === 1 ? "" : "es");
+    }
+  }
+
+  function getMatches() {
+    var query = state.query.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+    return state.elements
+      .filter(function (element) { return haystack(element).indexOf(query) !== -1; })
+      .map(function (element) { return element.exportIndex; });
+  }
+
+  function select(index) {
+    var element = state.byExport.get(index);
+    state.selected = element ? element.exportIndex : null;
+    render();
+    renderPanel();
+  }
+
+  function renderPanel() {
+    var element = state.selected === null ? null : state.byExport.get(state.selected);
+    dom.panel.textContent = "";
+
+    if (!element) {
+      var hint = document.createElement("p");
+      hint.className = "muted";
+      hint.textContent = state.elements.length
+        ? "Click a node to see its position, markers, note and connections."
+        : "No map data loaded yet. Drop map-export.txt onto the page.";
+      dom.panel.appendChild(hint);
+      return;
+    }
+
+    var title = document.createElement("h2");
+    title.textContent = element.name || String(element.placeId);
+    dom.panel.appendChild(title);
+
+    var sub = document.createElement("div");
+    sub.className = "sub";
+    sub.textContent = "place id " + element.placeId + (element.image ? " \u00b7 " + element.image : "");
+    dom.panel.appendChild(sub);
+
+    var position = document.createElement("div");
+    position.className = "block";
+    var positionLabel = document.createElement("div");
+    positionLabel.className = "label";
+    positionLabel.textContent = "position";
+    position.appendChild(positionLabel);
+    var positionValue = document.createElement("div");
+    positionValue.textContent = (element.x * 100).toFixed(2) + "% \u00d7 " + (element.y * 100).toFixed(2) + "%  (" + element.x.toFixed(4) + ", " + element.y.toFixed(4) + ")";
+    position.appendChild(positionValue);
+    dom.panel.appendChild(position);
+
+    if (element.markers.length) {
+      var markersBlock = document.createElement("div");
+      markersBlock.className = "block";
+      var markersLabel = document.createElement("div");
+      markersLabel.className = "label";
+      markersLabel.textContent = "markers";
+      markersBlock.appendChild(markersLabel);
+      element.markers.forEach(function (id) {
+        var info = MARKERS[id];
+        var chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = info ? info.name : String(id);
+        markersBlock.appendChild(chip);
+      });
+      dom.panel.appendChild(markersBlock);
+    }
+
+    var noteBlock = document.createElement("div");
+    noteBlock.className = "block";
+    var noteLabel = document.createElement("div");
+    noteLabel.className = "label";
+    noteLabel.textContent = "note";
+    noteBlock.appendChild(noteLabel);
+    var note = document.createElement("div");
+    note.className = "note";
+    note.textContent = element.note || "(no note)";
+    noteBlock.appendChild(note);
+    dom.panel.appendChild(noteBlock);
+
+    var incoming = state.elements.filter(function (other) {
+      return other.exits.indexOf(element.exportIndex) !== -1;
+    });
+
+    if (incoming.length) {
+      dom.panel.appendChild(connectionBlock("from", incoming));
+    }
+
+    var outgoing = element.exits.map(function (id) { return state.byExport.get(id); }).filter(Boolean);
+    if (outgoing.length) {
+      dom.panel.appendChild(connectionBlock("exits", outgoing));
+    }
+  }
+
+  function connectionBlock(label, elements) {
+    var block = document.createElement("div");
+    block.className = "block";
+    var heading = document.createElement("div");
+    heading.className = "label";
+    heading.textContent = label;
+    block.appendChild(heading);
+
+    elements.forEach(function (other) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "link";
+      button.textContent = "#" + other.exportIndex + "  " + (other.name || other.placeId);
+      button.addEventListener("click", function () { select(other.exportIndex); });
+      block.appendChild(button);
+    });
+
+    return block;
+  }
+
+  function fit() {
+    var width = dom.stage.clientWidth || 1200;
+    var height = dom.stage.clientHeight || 800;
+
+    if (!state.elements.length) {
+      state.view = { x: 0, y: 0, k: 1 };
+      render();
+      return;
+    }
+
+    var bounds = contentBounds();
+    var scale = Math.min(width / bounds.width, height / bounds.height) * 0.92;
+    scale = Math.max(0.1, Math.min(scale, 4));
+
+    state.view.k = scale;
+    state.view.x = width / 2 - (bounds.minX + bounds.width / 2) * scale;
+    state.view.y = height / 2 - (bounds.minY + bounds.height / 2) * scale;
+
+    render();
+  }
+
+  function contentBounds() {
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+
+    state.elements.forEach(function (element) {
+      var position = worldPos(element);
+      minX = Math.min(minX, position.x - NODE_W / 2);
+      maxX = Math.max(maxX, position.x + NODE_W / 2);
+      minY = Math.min(minY, position.y - NODE_H / 2);
+      maxY = Math.max(maxY, position.y + NODE_H / 2 + 44);
+    });
+
+    if (!isFinite(minX)) {
+      return { minX: 0, minY: 0, width: BASE_W, height: BASE_H };
+    }
+
+    var padding = 70;
+    return {
+      minX: minX - padding,
+      minY: minY - padding,
+      width: maxX - minX + padding * 2,
+      height: maxY - minY + padding * 2
+    };
+  }
+
+  function attachNodeEvents(group, element) {
+    group.style.cursor = "grab";
+
+    group.addEventListener("pointerdown", function (event) {
+      event.stopPropagation();
+      select(element.exportIndex);
+
+      if (event.button !== 0) {
+        return;
+      }
+
+      var start = worldPos(element);
+      var startX = event.clientX;
+      var startY = event.clientY;
+      var moved = false;
+
+      function onMove(moveEvent) {
+        var dx = (moveEvent.clientX - startX) / state.view.k;
+        var dy = (moveEvent.clientY - startY) / state.view.k;
+        if (Math.abs(dx) + Math.abs(dy) > 2) {
+          moved = true;
+        }
+        element._px = start.x + dx;
+        element._py = start.y + dy;
+        render();
+      }
+
+      function onUp() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        group.style.cursor = "grab";
+        if (moved) {
+          renderPanel();
+        }
+      }
+
+      group.style.cursor = "grabbing";
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  }
+
+  function initPanZoom() {
+    var panning = null;
+
+    dom.svg.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0) {
+        return;
+      }
+      panning = {
+        x: event.clientX,
+        y: event.clientY,
+        startX: state.view.x,
+        startY: state.view.y
+      };
+      dom.svg.classList.add("panning");
+    });
+
+    window.addEventListener("pointermove", function (event) {
+      if (!panning) {
+        return;
+      }
+      state.view.x = panning.startX + (event.clientX - panning.x);
+      state.view.y = panning.startY + (event.clientY - panning.y);
+      render();
+    });
+
+    window.addEventListener("pointerup", function () {
+      panning = null;
+      dom.svg.classList.remove("panning");
+    });
+
+    dom.svg.addEventListener("wheel", function (event) {
+      event.preventDefault();
+      var rect = dom.svg.getBoundingClientRect();
+      var pointerX = event.clientX - rect.left;
+      var pointerY = event.clientY - rect.top;
+      var factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+      var next = Math.max(0.1, Math.min(5, state.view.k * factor));
+      var worldX = (pointerX - state.view.x) / state.view.k;
+      var worldY = (pointerY - state.view.y) / state.view.k;
+
+      state.view.k = next;
+      state.view.x = pointerX - worldX * next;
+      state.view.y = pointerY - worldY * next;
+      render();
+    }, { passive: false });
+  }
+
+  function buildStandaloneSvg(scale) {
+    scale = scale || 1;
+    var bounds = contentBounds();
+    var clone = dom.world.cloneNode(true);
+
+    clone.removeAttribute("transform");
+    clone.querySelectorAll(".node").forEach(function (node) {
+      node.classList.remove("selected", "match");
+    });
+    clone.querySelectorAll(".ring").forEach(function (ring) {
+      ring.remove();
+    });
+
+    var width = Math.round(bounds.width * scale);
+    var height = Math.round(bounds.height * scale);
+    var stats = getStats();
+    var caption = [];
+    if (state.meta.placeId) {
+      caption.push("place " + state.meta.placeId);
+    }
+    caption.push(stats.elements + " elements");
+    caption.push(stats.connections + " connections");
+    if (state.meta.exportedAt) {
+      caption.push(state.meta.exportedAt);
+    }
+
+    return '<svg xmlns="' + SVG_NS + '" width="' + width + '" height="' + height
+      + '" viewBox="' + bounds.minX + " " + bounds.minY + " " + bounds.width + " " + bounds.height + '">'
+      + '<rect x="' + bounds.minX + '" y="' + bounds.minY + '" width="' + bounds.width + '" height="' + bounds.height + '" fill="#0b0b12"></rect>'
+      + arrowDefs()
+      + clone.innerHTML
+      + '<text x="' + (bounds.minX + 24) + '" y="' + (bounds.minY + bounds.height - 22)
+      + '" font-family="Segoe UI, Roboto, sans-serif" font-size="16" fill="#7c8095">'
+      + escapeXml(caption.join("  \u00b7  "))
+      + "</text>"
+      + "</svg>";
+  }
+
+  function escapeXml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function download(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+      link.remove();
+    }, 1500);
+  }
+
+  function baseName() {
+    return "map-" + (state.meta.placeId || "export");
+  }
+
+  function downloadSvg() {
+    if (!state.elements.length) {
+      return;
+    }
+    var svgText = buildStandaloneSvg(1);
+    download(baseName() + ".svg", new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }));
+  }
+
+  function downloadPng() {
+    if (!state.elements.length) {
+      return;
+    }
+
+    var svgText = buildStandaloneSvg(2);
+    var blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var image = new Image();
+
+    image.onload = function () {
+      var canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth || 1600;
+      canvas.height = image.naturalHeight || 1000;
+      var context = canvas.getContext("2d");
+      context.fillStyle = "#0b0b12";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0);
+      canvas.toBlob(function (png) {
+        if (png) {
+          download(baseName() + ".png", png);
+        }
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    };
+
+    image.onerror = function () {
+      URL.revokeObjectURL(url);
+      alert("Could not render the PNG in this browser. Use Download SVG instead.");
+    };
+
+    image.src = url;
+  }
+
+  function readFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var stats = loadText(String(reader.result || ""));
+      if (!stats) {
+        alert("That file does not look like a map export. Use workspace/map-export.txt from map-exporter.lua, or a json file with the element data.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function init() {
+    dom.stage = document.getElementById("stage");
+    dom.svg = document.getElementById("map");
+    dom.panel = document.getElementById("panel");
+    dom.search = document.getElementById("search");
+    dom.stats = document.getElementById("stats");
+    dom.empty = document.getElementById("empty");
+    dom.file = document.getElementById("file");
+
+    dom.world = svgNode("g", { id: "world" }, dom.svg);
+    var defs = document.createElementNS(SVG_NS, "defs");
+    defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+      + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#8b8fa3"></path></marker>';
+    dom.svg.appendChild(defs);
+
+    var style = document.createElementNS(SVG_NS, "style");
+    style.textContent = ".node{cursor:grab}.node .ring{display:none}.node.selected .ring{display:block}";
+    dom.svg.appendChild(style);
+
+    var legend = document.getElementById("legend");
+    Object.keys(MARKERS).forEach(function (id) {
+      var info = MARKERS[id];
+      var item = document.createElement("span");
+      var swatch = document.createElement("i");
+      swatch.style.background = info.color;
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(info.name));
+      legend.appendChild(item);
+    });
+
+    initPanZoom();
+
+    dom.file.addEventListener("change", function () {
+      if (dom.file.files && dom.file.files[0]) {
+        readFile(dom.file.files[0]);
+      }
+      dom.file.value = "";
+    });
+
+    dom.search.addEventListener("input", function () {
+      state.query = dom.search.value;
+      render();
+      var matches = getMatches();
+      if (matches.length === 1) {
+        select(matches[0]);
+      }
+    });
+
+    document.getElementById("fit").addEventListener("click", fit);
+    document.getElementById("svg").addEventListener("click", downloadSvg);
+    document.getElementById("png").addEventListener("click", downloadPng);
+
+    window.addEventListener("keydown", function (event) {
+      var tag = (event.target && event.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        if (event.key === "Escape") {
+          event.target.blur();
+        }
+        return;
+      }
+      if (event.key === "0") {
+        fit();
+      } else if (event.key === "+" || event.key === "=") {
+        state.view.k = Math.min(5, state.view.k * 1.2);
+        render();
+      } else if (event.key === "-") {
+        state.view.k = Math.max(0.1, state.view.k / 1.2);
+        render();
+      } else if (event.key === "Escape") {
+        select(null);
+      }
+    });
+
+    window.addEventListener("resize", function () {
+      render();
+    });
+
+    window.addEventListener("dragover", function (event) {
+      event.preventDefault();
+      document.body.classList.add("dragging");
+    });
+
+    window.addEventListener("dragleave", function (event) {
+      if (event.relatedTarget === null) {
+        document.body.classList.remove("dragging");
+      }
+    });
+
+    window.addEventListener("drop", function (event) {
+      event.preventDefault();
+      document.body.classList.remove("dragging");
+      if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]) {
+        readFile(event.dataTransfer.files[0]);
+      }
+    });
+
+    render();
+    renderPanel();
+  }
+
+  window.MapViewer = {
+    loadText: loadText,
+    parseExport: parseExport,
+    select: select,
+    setQuery: function (value) {
+      state.query = value;
+      dom.search.value = value;
+      render();
+    },
+    getMatches: getMatches,
+    getStats: getStats,
+    buildStandaloneSvg: buildStandaloneSvg,
+    fit: fit,
+    render: render,
+    state: state
+  };
+
+  init();
+})();
+</script>
+</body>
+</html>
