@@ -1585,8 +1585,18 @@
   }
 
   function inMapDocument(element) {
-    var key = foldName(element.name);
-    return key.length > 2 && rosterText().indexOf(key) !== -1;
+    var name = String(element.name || '').trim();
+    var key = foldName(name);
+
+    if (!key) {
+      // names made only of symbols, like ":" world ":( " or "???", have nothing
+      // to fold, so they are looked up as they are written
+      return name !== '' && rosterText().length > -1
+        && foldName(DOC_ROSTER).indexOf(key) !== -1
+        && DOC_ROSTER.toLowerCase().indexOf(name.toLowerCase()) !== -1;
+    }
+
+    return key.length > 1 && rosterText().indexOf(key) !== -1;
   }
 
   // the map's key card is a legend note, not a world
