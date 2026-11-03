@@ -178,6 +178,8 @@
     #doc .doc-meta { color: #444; font-size: 12px; margin: 0 0 12px; }
     #doc .doc-map { margin: 0 0 14px; }
     #doc .doc-map svg { width: 100%; height: auto; }
+    #doc .doc-legend { font-size: 10px; color: #444; margin: 0 0 14px; line-height: 1.5; }
+    #doc .doc-legend p { margin: 2px 0; }
     #doc table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
     #doc th, #doc td { border: 1px solid #bbb; padding: 3px 5px; text-align: left; vertical-align: top; }
     #doc thead { display: table-header-group; }
@@ -203,6 +205,7 @@
   <button id="svg" class="btn" type="button">Download SVG</button>
   <button id="png" class="btn" type="button">Download PNG</button>
   <button id="print" class="btn" type="button">Save as PDF</button>
+  <button id="portals" class="btn" type="button">Portals: off</button>
 </header>
 
 <main>
@@ -247,6 +250,7 @@
     selected: null,
     query: "",
     view: { x: 0, y: 0, k: 1 },
+    hidePortals: true,
     meta: { placeId: "", placeName: "", exportedAt: "" }
   };
 
@@ -446,7 +450,7 @@
     var connections = 0;
     var markers = 0;
     var notes = 0;
-    state.elements.forEach(function (element) {
+    visibleElements().forEach(function (element) {
       connections += element.exits.filter(function (id) { return state.byExport.has(id); }).length;
       markers += element.markers.length;
       if (element.note) {
@@ -454,10 +458,11 @@
       }
     });
     return {
-      elements: state.elements.length,
+      elements: visibleElements().length,
       connections: connections,
       markers: markers,
-      notes: notes
+      notes: notes,
+      portals: portalCount()
     };
   }
 
@@ -469,6 +474,29 @@
       x: element.x * MAP_W * COORD_SCALE,
       y: element.y * MAP_H * COORD_SCALE
     };
+  }
+
+  function isPortal(element) {
+    return /^\s*portals?\b/i.test(String(element.name || ""));
+  }
+
+  function portalCount() {
+    var count = 0;
+    state.elements.forEach(function (element) {
+      if (isPortal(element)) {
+        count += 1;
+      }
+    });
+    return count;
+  }
+
+  function visibleElements() {
+    if (!state.hidePortals) {
+      return state.elements;
+    }
+    return state.elements.filter(function (element) {
+      return !isPortal(element);
+    });
   }
 
   function arrowDefs() {
@@ -526,10 +554,16 @@
     // ids live in world space, names are drawn in screen space so they stay readable
     var showIds = state.view.k >= 0.14;
 
-    state.elements.forEach(function (source) {
+    var visible = visibleElements();
+    var visibleIndexes = {};
+    visible.forEach(function (element) {
+      visibleIndexes[element.exportIndex] = true;
+    });
+
+    visible.forEach(function (source) {
       source.exits.forEach(function (exitIndex) {
         var target = state.byExport.get(exitIndex);
-        if (!target) {
+        if (!target || !visibleIndexes[exitIndex]) {
           return;
         }
         svgNode("path", {
@@ -543,7 +577,7 @@
       });
     });
 
-    state.elements.slice().sort(function (a, b) { return a._z - b._z; }).forEach(function (element) {
+    visible.slice().sort(function (a, b) { return a._z - b._z; }).forEach(function (element) {
       var position = worldPos(element);
       var matches = query !== "" && haystack(element).indexOf(query) !== -1;
 
@@ -628,18 +662,119 @@
   }
 
   function truncateLabel(text, limit) {
-    var max = limit || 26;
+    var max = limit || 34;
     var value = String(text === undefined || text === null ? "" : text);
     return value.length > max ? value.slice(0, max - 1) + "\u2026" : value;
   }
 
-  function drawScreenLabel(text, x, baseline, color) {
+  function createLabelGrid(cellSize) {
+    var cells = new Map();
+
+    function rangeOf(box) {
+      return {
+        x0: Math.floor(box.x / cellSize),
+        x1: Math.floor((box.x + box.w) / cellSize),
+        y0: Math.floor(box.y / cellSize),
+        y1: Math.floor((box.y + box.h) / cellSize)
+      };
+    }
+
+    return {
+      add: function (box) {
+        var range = rangeOf(box);
+        for (var gx = range.x0; gx <= range.x1; gx += 1) {
+          for (var gy = range.y0; gy <= range.y1; gy += 1) {
+            var key = gx + ":" + gy;
+            var list = cells.get(key);
+            if (!list) {
+              list = [];
+              cells.set(key, list);
+            }
+            list.push(box);
+          }
+        }
+      },
+      hits: function (box) {
+        var range = rangeOf(box);
+        for (var gx = range.x0; gx <= range.x1; gx += 1) {
+          for (var gy = range.y0; gy <= range.y1; gy += 1) {
+            var list = cells.get(gx + ":" + gy);
+            if (!list) {
+              continue;
+            }
+            for (var i = 0; i < list.length; i += 1) {
+              var other = list[i];
+              if (box.x < other.x + other.w && box.x + box.w > other.x
+                && box.y < other.y + other.h && box.y + box.h > other.y) {
+                return true;
+              }
+            }
+          }
+        }
+        return false;
+      }
+    };
+  }
+
+  var LABEL_DIRECTIONS = [
+    [0, 1], [0, -1], [1, 0], [-1, 0],
+    [1, 1], [-1, 1], [1, -1], [-1, -1]
+  ];
+
+  function findLabelSpot(text, x, y, font, nodeW, nodeH, nodeGrid, labelGrid, bounds, priority) {
+    var sizes = priority
+      ? [font + 2, font + 1, font, font - 1]
+      : [font, font - 1, font - 2, font - 3];
+    var minFont = 8;
+
+    for (var s = 0; s < sizes.length; s += 1) {
+      var size = Math.max(minFont, sizes[s]);
+      var width = Math.max(size * 1.8, text.length * size * 0.56);
+      var height = size + 5;
+
+      for (var pass = 0; pass < 2; pass += 1) {
+        var spread = pass === 0 ? 1 : 1.9;
+
+        for (var d = 0; d < LABEL_DIRECTIONS.length; d += 1) {
+          var dirX = LABEL_DIRECTIONS[d][0];
+          var dirY = LABEL_DIRECTIONS[d][1];
+          var centerX = x + dirX * (nodeW / 2 + width / 2 + 5) * spread;
+          var centerY = y + dirY * (nodeH / 2 + height / 2 + 5) * spread;
+          var box = {
+            x: centerX - width / 2,
+            y: centerY - height / 2,
+            w: width,
+            h: height
+          };
+
+          if (box.x < bounds.left || box.x + box.w > bounds.right
+            || box.y < bounds.top || box.y + box.h > bounds.bottom) {
+            continue;
+          }
+          if (nodeGrid.hits(box) || labelGrid.hits(box)) {
+            continue;
+          }
+
+          return {
+            x: centerX,
+            baseline: centerY + size * 0.34,
+            box: box,
+            font: size
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function drawScreenLabel(text, x, baseline, color, font) {
     svgNode("text", {
       x: x,
       y: baseline,
       "text-anchor": "middle",
       "font-family": "Segoe UI, Roboto, sans-serif",
-      "font-size": LABEL_FONT,
+      "font-size": font,
       "font-weight": 700,
       fill: color,
       stroke: "#07070c",
@@ -649,7 +784,7 @@
     }, dom.labelLayer).textContent = text;
   }
 
-  // labels are drawn in screen space so they stay the same readable size at any zoom
+  // every name gets a spot: shrink it, move it around the node, never hide it
   function renderLabels(query) {
     if (!dom.labelLayer) {
       return;
@@ -661,41 +796,92 @@
 
     var width = dom.stage.clientWidth || 1200;
     var height = dom.stage.clientHeight || 800;
-    var placed = [];
-    var ordered = state.elements.slice().sort(function (a, b) { return b._z - a._z; });
+    var elements = visibleElements();
+    var nodeW = NODE_W * state.view.k;
+    var nodeH = NODE_H * state.view.k;
+    var nodeGrid = createLabelGrid(64);
+    var labelGrid = createLabelGrid(64);
+    var baseFont = Math.max(8, Math.min(LABEL_FONT, nodeH * 0.5));
+    var bounds = { left: 4, top: 4, right: width - 4, bottom: height - 4 };
+    var positioned = [];
+
+    elements.forEach(function (element) {
+      var position = worldPos(element);
+      element._screenX = position.x * state.view.k + state.view.x;
+      element._screenY = position.y * state.view.k + state.view.y;
+      nodeGrid.add({
+        x: element._screenX - nodeW / 2,
+        y: element._screenY - nodeH / 2,
+        w: nodeW,
+        h: nodeH + 30
+      });
+    });
+
+    var ordered = elements.slice().sort(function (a, b) {
+      var aSelected = state.selected === a.exportIndex ? 1 : 0;
+      var bSelected = state.selected === b.exportIndex ? 1 : 0;
+      if (aSelected !== bSelected) {
+        return bSelected - aSelected;
+      }
+      return b._z - a._z;
+    });
 
     ordered.forEach(function (element) {
-      var position = worldPos(element);
-      var screenX = position.x * state.view.k + state.view.x;
-      var screenY = position.y * state.view.k + state.view.y;
-
-      if (screenX < -140 || screenX > width + 140 || screenY < -80 || screenY > height + 90) {
+      if (element._screenX < -200 || element._screenX > width + 200
+        || element._screenY < -140 || element._screenY > height + 160) {
         return;
       }
 
       var isSelected = state.selected === element.exportIndex;
       var isMatch = query !== "" && haystack(element).indexOf(query) !== -1;
-      var label = truncateLabel(element.name || String(element.placeId), isSelected ? 40 : 26);
-      var textWidth = Math.max(LABEL_FONT * 2, label.length * LABEL_FONT * 0.58);
-      var box = {
-        x: screenX - textWidth / 2,
-        y: screenY + (NODE_H * state.view.k) / 2 + 4,
-        w: textWidth,
-        h: LABEL_FONT + 6
-      };
+      var label = truncateLabel(element.name || String(element.placeId), isSelected ? 46 : 30);
+      var spot = findLabelSpot(
+        label,
+        element._screenX,
+        element._screenY,
+        baseFont,
+        nodeW,
+        nodeH,
+        nodeGrid,
+        labelGrid,
+        bounds,
+        isSelected || isMatch
+      );
 
-      if (!isSelected && !isMatch) {
-        var blocked = placed.some(function (other) {
-          return box.x < other.x + other.w && box.x + box.w > other.x
-            && box.y < other.y + other.h && box.y + box.h > other.y;
-        });
-        if (blocked) {
-          return;
-        }
+      if (!spot) {
+        var small = 8;
+        var smallWidth = Math.max(small * 1.8, label.length * small * 0.56);
+        spot = {
+          x: element._screenX,
+          baseline: element._screenY + nodeH / 2 + small + 8,
+          box: {
+            x: element._screenX - smallWidth / 2,
+            y: element._screenY + nodeH / 2 + 4,
+            w: smallWidth,
+            h: small + 5
+          },
+          font: small
+        };
       }
 
-      placed.push(box);
-      drawScreenLabel(label, screenX, box.y + LABEL_FONT, isSelected || isMatch ? "#ffe58a" : "#e7e9f4");
+      labelGrid.add(spot.box);
+      positioned.push({ element: element, spot: spot, text: label, strong: isSelected || isMatch });
+    });
+
+    positioned.forEach(function (item) {
+      var spot = item.spot;
+      if (Math.abs(spot.x - item.element._screenX) > nodeW / 2 + spot.box.w / 2 + 22
+        || Math.abs(spot.baseline - item.element._screenY) > nodeH / 2 + spot.box.h / 2 + 22) {
+        svgNode("line", {
+          x1: item.element._screenX,
+          y1: item.element._screenY,
+          x2: spot.x,
+          y2: spot.baseline - spot.font * 0.34,
+          stroke: "#3a3d52",
+          "stroke-width": 1
+        }, dom.labelLayer);
+      }
+      drawScreenLabel(item.text, spot.x, spot.baseline, item.strong ? "#ffe58a" : "#e7e9f4", spot.font);
     });
   }
 
@@ -711,6 +897,9 @@
   function updateStats() {
     var stats = getStats();
     dom.stats.textContent = stats.elements + " elements \u00b7 " + stats.connections + " connections";
+    if (stats.portals > 0) {
+      dom.stats.textContent += " \u00b7 " + stats.portals + " portals hidden";
+    }
     if (dom.zoom) {
       dom.zoom.textContent = Math.round(state.view.k * 100) + "%";
     }
@@ -805,7 +994,12 @@
     noteBlock.appendChild(note);
     dom.panel.appendChild(noteBlock);
 
-    var incoming = state.elements.filter(function (other) {
+    var visibleIndexes = {};
+    visibleElements().forEach(function (item) {
+      visibleIndexes[item.exportIndex] = true;
+    });
+
+    var incoming = visibleElements().filter(function (other) {
       return other.exits.indexOf(element.exportIndex) !== -1;
     });
 
@@ -813,7 +1007,9 @@
       dom.panel.appendChild(connectionBlock("from", incoming));
     }
 
-    var outgoing = element.exits.map(function (id) { return state.byExport.get(id); }).filter(Boolean);
+    var outgoing = element.exits.map(function (id) { return state.byExport.get(id); }).filter(function (other) {
+      return other && visibleIndexes[other.exportIndex];
+    });
     if (outgoing.length) {
       dom.panel.appendChild(connectionBlock("exits", outgoing));
     }
@@ -1086,7 +1282,7 @@
   function buildStandaloneSvg() {
     var stats = getStats();
 
-    if (!state.elements.length) {
+    if (!visibleElements().length) {
       return '<svg xmlns="' + SVG_NS + '" width="900" height="460" viewBox="0 0 900 460">'
         + '<rect width="900" height="460" fill="#07070c"></rect>'
         + '<text x="450" y="230" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="18" fill="#8f93aa">no map data</text></svg>';
@@ -1097,7 +1293,7 @@
     var unit = bounds.width / pixels.width;
     var stroke = 2.4 * unit;
     var idFont = 17 * unit;
-    var labelFont = 19 * unit;
+    var labelFont = 14 * unit;
     var markerSize = 13 * unit;
     var parts = [];
 
@@ -1107,10 +1303,16 @@
       + '" height="' + round2(bounds.height) + '" fill="#07070c"></rect>');
     parts.push(arrowDefs());
 
-    state.elements.forEach(function (source) {
+    var visible = visibleElements();
+    var visibleIndexes = {};
+    visible.forEach(function (element) {
+      visibleIndexes[element.exportIndex] = true;
+    });
+
+    visible.forEach(function (source) {
       source.exits.forEach(function (exitIndex) {
         var target = state.byExport.get(exitIndex);
-        if (!target) {
+        if (!target || !visibleIndexes[exitIndex]) {
           return;
         }
         parts.push('<path d="' + edgePath(worldPos(source), worldPos(target))
@@ -1118,9 +1320,26 @@
       });
     });
 
-    var labelBoxes = [];
     var labelParts = [];
-    var ordered = state.elements.slice().sort(function (a, b) { return a._z - b._z; });
+    var ordered = visibleElements().slice().sort(function (a, b) { return a._z - b._z; });
+    var exportNodeGrid = createLabelGrid(220);
+    var exportLabelGrid = createLabelGrid(220);
+    var exportBounds = {
+      left: bounds.minX + 10 * unit,
+      top: bounds.minY + 10 * unit,
+      right: bounds.minX + bounds.width - 10 * unit,
+      bottom: bounds.minY + bounds.height - 10 * unit
+    };
+
+    ordered.forEach(function (element) {
+      var position = worldPos(element);
+      exportNodeGrid.add({
+        x: position.x - NODE_W / 2,
+        y: position.y - NODE_H / 2,
+        w: NODE_W,
+        h: NODE_H + labelFont
+      });
+    });
 
     ordered.forEach(function (element) {
       var position = worldPos(element);
@@ -1146,26 +1365,28 @@
           + round2(stroke * 0.6) + '"></rect>');
       });
 
-      var label = truncateLabel(element.name || String(element.placeId), 30);
-      var textWidth = Math.max(labelFont * 2, label.length * labelFont * 0.58);
-      var box = {
-        x: position.x - textWidth / 2,
-        y: position.y + NODE_H / 2 + 8,
-        w: textWidth,
-        h: labelFont * 1.4
-      };
-      var blocked = labelBoxes.some(function (other) {
-        return box.x < other.x + other.w && box.x + box.w > other.x
-          && box.y < other.y + other.h && box.y + box.h > other.y;
-      });
+      var label = truncateLabel(element.name || String(element.placeId), 34);
+      var spot = findLabelSpot(label, position.x, position.y, labelFont, NODE_W, NODE_H, exportNodeGrid, exportLabelGrid, exportBounds, false);
 
-      if (!blocked) {
-        labelBoxes.push(box);
-        labelParts.push('<text x="' + round2(position.x) + '" y="' + round2(box.y + labelFont)
-          + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(labelFont)
-          + '" font-weight="700" fill="#f1f2f6" stroke="#07070c" stroke-width="' + round2(labelFont * 0.3)
-          + '" stroke-linejoin="round" paint-order="stroke">' + escapeXml(label) + '</text>');
+      if (!spot) {
+        spot = {
+          x: position.x,
+          baseline: position.y + NODE_H / 2 + labelFont + 8,
+          box: {
+            x: position.x - labelFont * 5,
+            y: position.y + NODE_H / 2 + 6,
+            w: labelFont * 10,
+            h: labelFont + 5
+          },
+          font: labelFont
+        };
       }
+
+      exportLabelGrid.add(spot.box);
+      labelParts.push('<text x="' + round2(spot.x) + '" y="' + round2(spot.baseline)
+        + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(spot.font)
+        + '" font-weight="700" fill="#f1f2f6" stroke="#07070c" stroke-width="' + round2(spot.font * 0.3)
+        + '" stroke-linejoin="round" paint-order="stroke">' + escapeXml(label) + '</text>');
     });
 
     parts = parts.concat(labelParts);
@@ -1209,7 +1430,7 @@
     meta.push(stats.elements + " elements");
     meta.push(stats.connections + " connections");
 
-    var rows = state.elements.slice().sort(function (a, b) { return a._z - b._z; }).map(function (element) {
+    var rows = visibleElements().slice().sort(function (a, b) { return a._z - b._z; }).map(function (element) {
       var exits = element.exits.map(function (id) {
         var other = state.byExport.get(id);
         return other ? "#" + other.exportIndex : null;
@@ -1228,7 +1449,10 @@
     return "<h1>Map export</h1>"
       + '<p class="doc-meta">' + escapeXml(meta.join("  \u00b7  ")) + "</p>"
       + '<div class="doc-map">' + buildStandaloneSvg() + "</div>"
-      + "<h2>Elements (" + stats.elements + ")</h2>"
+      + '<div class="doc-legend"><p><strong>Legend</strong> &mdash; small squares on a world mark a DeadEnd, Badge or AltExit. Red text on the map marks worlds that are hard to reach.</p>'
+      + "<p>Portals are not actual worlds; they only link worlds with more than one entrance, so they are left off this map. "
+      + stats.portals + " portal nodes hidden, " + stats.markers + " markers, " + stats.notes + " notes.</p></div>"
+      + "<h2>Worlds (" + stats.elements + ")</h2>"
       + "<table><thead><tr><th>#</th><th>place id</th><th>name</th><th>position</th><th>markers</th><th>exits</th><th>note</th></tr></thead><tbody>"
       + rows
       + "</tbody></table>";
@@ -1392,6 +1616,12 @@
     document.getElementById("svg").addEventListener("click", downloadSvg);
     document.getElementById("png").addEventListener("click", downloadPng);
     document.getElementById("print").addEventListener("click", printDocument);
+    document.getElementById("portals").addEventListener("click", function () {
+      state.hidePortals = !state.hidePortals;
+      this.textContent = state.hidePortals ? "Portals: off" : "Portals: on";
+      render();
+      renderPanel();
+    });
 
     window.addEventListener("keydown", function (event) {
       var tag = (event.target && event.target.tagName) || "";
