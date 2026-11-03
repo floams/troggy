@@ -165,7 +165,7 @@
       <p>.txt or .json</p>
     </div>
     <div id="legend"></div>
-    <div id="hint">drag to pan &middot; scroll to zoom &middot; click a square for its note</div>
+    <div id="hint">drag to pan :: scroll to zoom :: click a square for its note</div>
   </div>
   <aside id="panel"></aside>
 </main>
@@ -188,9 +188,9 @@
   var SVG_NS = "http://www.w3.org/2000/svg";
 
   var MARKERS = {
-    1: { name: "DeadEnd", color: "#a6e3a1" },
-    2: { name: "Badge", color: "#cba6f7" },
-    3: { name: "AltExit", color: "#fab387" }
+    1: { name: "deadend", color: "#a6e3a1" },
+    2: { name: "badge", color: "#cba6f7" },
+    3: { name: "altexit", color: "#fab387" }
   };
 
   var state = {
@@ -938,9 +938,9 @@
 
   function updateStats() {
     var stats = getStats();
-    dom.stats.textContent = stats.elements + " elements \u00b7 " + stats.connections + " connections";
+    dom.stats.textContent = stats.elements + " elements :: " + stats.connections + " connections";
     if (stats.portals > 0) {
-      dom.stats.textContent += " \u00b7 " + stats.portals + " portals hidden";
+      dom.stats.textContent += " :: " + stats.portals + " portals hidden";
     }
     if (dom.zoom) {
       dom.zoom.textContent = Math.round(state.view.k * 100) + "%";
@@ -949,7 +949,7 @@
       var matches = state.elements.filter(function (element) {
         return haystack(element).indexOf(state.query.trim().toLowerCase()) !== -1;
       }).length;
-      dom.stats.textContent += " \u00b7 " + matches + " match" + (matches === 1 ? "" : "es");
+      dom.stats.textContent += " :: " + matches + " match" + (matches === 1 ? "" : "es");
     }
   }
 
@@ -981,8 +981,8 @@
       var hint = document.createElement("p");
       hint.className = "muted";
       hint.textContent = state.elements.length
-        ? "Click a node to see its position, markers, note and connections."
-        : "No map data loaded yet. Drop map-export.txt onto the page.";
+        ? "click a square to see its position, markers, note and connections."
+        : "no map data loaded yet. drop an export onto the page.";
       dom.panel.appendChild(hint);
       return;
     }
@@ -993,7 +993,7 @@
 
     var sub = document.createElement("div");
     sub.className = "sub";
-    sub.textContent = "place id " + element.placeId + (element.image ? " \u00b7 " + element.image : "");
+    sub.textContent = "place id " + element.placeId + (element.image ? " :: " + element.image : "");
     dom.panel.appendChild(sub);
 
     var position = document.createElement("div");
@@ -1461,7 +1461,7 @@
 
     parts.push('<text x="' + round2(bounds.minX + 20 * unit) + '" y="' + round2(bounds.minY + bounds.height - 22 * unit)
       + '" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(17 * unit) + '" fill="#6c7086">'
-      + escapeXml(caption.join("  \u00b7  ")) + "</text>");
+      + escapeXml(caption.join("  ::  ")) + "</text>");
 
     parts.push("</svg>");
     return parts.join("");
@@ -1693,11 +1693,11 @@
     var missingBlock = missing.length
       ? '<div class="doc-missing"><b>Not in the map document (' + missing.length + ")</b>"
         + "On your map but missing from the document, so they are red in the list above: "
-        + missingNames.join(" &middot; ") + "</div>"
+        + missingNames.join(" :: ") + "</div>"
       : "";
 
     return "<h1>Map document</h1>"
-      + '<p class="doc-meta">' + escapeXml(meta.join("  \u00b7  ")) + "</p>"
+      + '<p class="doc-meta">' + escapeXml(meta.join("  ::  ")) + "</p>"
       + '<div class="doc-map">' + documentMapSvg() + "</div>"
       + documentBoard(worlds)
       + "<h2>Worlds (" + worlds.length + ")</h2>"
@@ -1781,7 +1781,7 @@
       var context = canvas.getContext("2d");
       if (!context) {
         URL.revokeObjectURL(url);
-        alert("This browser could not draw the PNG. Use Download SVG or Save as PDF instead.");
+        alert("this browser could not draw the png. use download svg or save as pdf instead.");
         return;
       }
 
@@ -1794,14 +1794,14 @@
         if (png) {
           download(baseName() + ".png", png);
         } else {
-          alert("This browser could not make the PNG. Use Download SVG or Save as PDF instead.");
+          alert("this browser could not make the png. use download svg or save as pdf instead.");
         }
       }, "image/png");
     };
 
     image.onerror = function () {
       URL.revokeObjectURL(url);
-      alert("Could not render the PNG in this browser. Use Download SVG or Save as PDF instead.");
+      alert("could not render the png in this browser. use download svg or save as pdf instead.");
     };
 
     image.src = url;
@@ -1812,7 +1812,7 @@
     reader.onload = function () {
       var stats = loadText(String(reader.result || ""));
       if (!stats) {
-        alert("That file does not look like a map export. Use workspace/map-export.txt from map-exporter.lua, or a json file with the element data.");
+        alert("that file does not look like a map export. use a file from workspace/home map exports, or a json file with the element data.");
       }
     };
     reader.readAsText(file);
@@ -1890,13 +1890,13 @@
     document.getElementById("docx").addEventListener("click", downloadDocument);
     document.getElementById("names").addEventListener("click", function () {
       state.showNames = !state.showNames;
-      this.textContent = state.showNames ? "Names: on" : "Names: off";
+      this.textContent = state.showNames ? "names on" : "names off";
       render();
     });
 
     document.getElementById("portals").addEventListener("click", function () {
       state.hidePortals = !state.hidePortals;
-      this.textContent = state.hidePortals ? "Portals: off" : "Portals: on";
+      this.textContent = state.hidePortals ? "portals off" : "portals on";
       render();
       renderPanel();
     });
