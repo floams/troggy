@@ -350,7 +350,86 @@
       });
     });
 
-    return elements;
+    return dedupeElements(elements);
+  }
+
+  function labelKey(element) {
+    var name = String(element.name || "").trim().replace(/\s+/g, " ").toLowerCase();
+    var placeId = String(element.placeId);
+
+    if (placeId === "CUSTOM" || placeId === "") {
+      if (!name) {
+        return "custom-pos:" + Math.round(element.x * 1000) + ":" + Math.round(element.y * 1000);
+      }
+      return "custom:" + name;
+    }
+
+    return "id:" + placeId;
+  }
+
+  // the map stores one copy of a world per entrance, so the same world shows up
+  // several times a few pixels apart: keep the first copy and fold the rest in
+  function dedupeElements(elements) {
+    var kept = [];
+    var byKey = new Map();
+    var remap = new Map();
+    var mergeRadius = 0.09;
+
+    elements.forEach(function (element) {
+      var key = labelKey(element);
+      var group = byKey.get(key);
+
+      if (!group) {
+        group = [];
+        byKey.set(key, group);
+      }
+
+      var existing = null;
+      for (var i = 0; i < group.length; i += 1) {
+        if (Math.abs(group[i].x - element.x) <= mergeRadius
+          && Math.abs(group[i].y - element.y) <= mergeRadius) {
+          existing = group[i];
+          break;
+        }
+      }
+
+      if (!existing) {
+        group.push(element);
+        kept.push(element);
+        remap.set(element.exportIndex, element.exportIndex);
+        return;
+      }
+
+      existing.exits = existing.exits.concat(element.exits);
+      if (!existing.note && element.note) {
+        existing.note = element.note;
+      }
+      if (!existing.image && element.image) {
+        existing.image = element.image;
+      }
+      if (!existing.name && element.name) {
+        existing.name = element.name;
+      }
+      if (!existing.markers.length && element.markers.length) {
+        existing.markers = element.markers.slice();
+      }
+      remap.set(element.exportIndex, existing.exportIndex);
+    });
+
+    kept.forEach(function (element) {
+      var seen = {};
+      element.exits = element.exits
+        .map(function (id) { return remap.has(id) ? remap.get(id) : id; })
+        .filter(function (id) {
+          if (id === element.exportIndex || seen[id]) {
+            return false;
+          }
+          seen[id] = true;
+          return true;
+        });
+    });
+
+    return kept;
   }
 
   function parseExport(text) {
