@@ -478,7 +478,12 @@ if type(writefile) == "function" then
 
 	local ok, err = pcall(writefile, exportPath, text)
 	if ok then
-		print("saved map export to workspace. " .. exportPath)
+		local size = #text
+		local sizeText = size >= 1024
+			and string.format("%.1f KB", size / 1024)
+			or string.format("%d bytes", size)
+
+		print(string.format("saved map export to workspace. %s (%s)", exportPath, sizeText))
 	else
 		warn("[map-exporter] could not write " .. exportPath .. ": " .. tostring(err))
 		print(text)
