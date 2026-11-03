@@ -804,6 +804,7 @@
     var baseFont = Math.max(8, Math.min(LABEL_FONT, nodeH * 0.5));
     var bounds = { left: 4, top: 4, right: width - 4, bottom: height - 4 };
     var positioned = [];
+    var labeledAnchors = [];
 
     elements.forEach(function (element) {
       var position = worldPos(element);
@@ -835,6 +836,17 @@
       var isSelected = state.selected === element.exportIndex;
       var isMatch = query !== "" && haystack(element).indexOf(query) !== -1;
       var label = truncateLabel(element.name || String(element.placeId), isSelected ? 46 : 30);
+      var duplicate = labeledAnchors.some(function (other) {
+        return other.label === label
+          && Math.abs(other.x - element._screenX) < 18
+          && Math.abs(other.y - element._screenY) < 18;
+      });
+
+      if (duplicate) {
+        return;
+      }
+
+      labeledAnchors.push({ label: label, x: element._screenX, y: element._screenY });
       var spot = findLabelSpot(
         label,
         element._screenX,
@@ -1321,6 +1333,7 @@
     });
 
     var labelParts = [];
+    var labelAnchors = [];
     var ordered = visibleElements().slice().sort(function (a, b) { return a._z - b._z; });
     var exportNodeGrid = createLabelGrid(220);
     var exportLabelGrid = createLabelGrid(220);
@@ -1366,6 +1379,17 @@
       });
 
       var label = truncateLabel(element.name || String(element.placeId), 34);
+      var duplicate = labelAnchors.some(function (other) {
+        return other.label === label
+          && Math.abs(other.x - position.x) < NODE_W * 0.6
+          && Math.abs(other.y - position.y) < NODE_H * 0.6;
+      });
+
+      if (duplicate) {
+        return;
+      }
+
+      labelAnchors.push({ label: label, x: position.x, y: position.y });
       var spot = findLabelSpot(label, position.x, position.y, labelFont, NODE_W, NODE_H, exportNodeGrid, exportLabelGrid, exportBounds, false);
 
       if (!spot) {
