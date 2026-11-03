@@ -1119,6 +1119,7 @@
     });
 
     var labelBoxes = [];
+    var labelParts = [];
     var ordered = state.elements.slice().sort(function (a, b) { return a._z - b._z; });
 
     ordered.forEach(function (element) {
@@ -1160,12 +1161,14 @@
 
       if (!blocked) {
         labelBoxes.push(box);
-        parts.push('<text x="' + round2(position.x) + '" y="' + round2(box.y + labelFont)
+        labelParts.push('<text x="' + round2(position.x) + '" y="' + round2(box.y + labelFont)
           + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(labelFont)
           + '" font-weight="700" fill="#f1f2f6" stroke="#07070c" stroke-width="' + round2(labelFont * 0.3)
           + '" stroke-linejoin="round" paint-order="stroke">' + escapeXml(label) + '</text>');
       }
     });
+
+    parts = parts.concat(labelParts);
 
     var caption = [];
     if (state.meta.placeId) {
