@@ -1642,6 +1642,15 @@
       + buildDocument() + '</div></body></html>';
   }
 
+  // the document never shows portal nodes, whatever the toggle is set to
+  function documentMapSvg() {
+    var hiding = state.hidePortals;
+    state.hidePortals = true;
+    var svg = buildStandaloneSvg();
+    state.hidePortals = hiding;
+    return svg;
+  }
+
   function buildDocument() {
     var stats = getStats();
     var worlds = documentWorlds();
@@ -1680,7 +1689,7 @@
 
     return "<h1>Map document</h1>"
       + '<p class="doc-meta">' + escapeXml(meta.join("  \u00b7  ")) + "</p>"
-      + '<div class="doc-map">' + buildStandaloneSvg() + "</div>"
+      + '<div class="doc-map">' + documentMapSvg() + "</div>"
       + "<h2>Worlds (" + worlds.length + ")</h2>"
       + '<div class="doc-worlds">' + chips + "</div>"
       + missingBlock
