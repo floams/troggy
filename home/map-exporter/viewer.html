@@ -172,6 +172,7 @@
   <span id="stats" class="stats"></span>
   <span class="spacer"></span>
   <button id="fit" class="btn" type="button">Fit</button>
+  <button id="reset" class="btn" type="button">Reset layout</button>
   <button id="svg" class="btn" type="button">Download SVG</button>
   <button id="png" class="btn" type="button">Download PNG</button>
 </header>
@@ -195,10 +196,12 @@
 (function () {
   "use strict";
 
-  var BASE_W = 1600;
-  var BASE_H = 1000;
-  var PAD = 90;
-  var NODE_W = 150;
+  // the map tool lays elements out on a 944x506 canvas, so these constants turn
+  // an exported 0..1 ScalePosition back into its exact spot on that canvas
+  var MAP_W = 944;
+  var MAP_H = 506;
+  var COORD_SCALE = 2.2;
+  var NODE_W = 62;
   var NODE_H = 62;
   var SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -234,11 +237,11 @@
     return node;
   }
 
-  function clamp01(value) {
-    if (!isFinite(value)) {
-      return 0.5;
-    }
-    return Math.min(1, Math.max(0, value));
+  var zCounter = 0;
+
+  function bump(element) {
+    zCounter += 1;
+    element._z = zCounter;
   }
 
   function toColor(value) {
@@ -298,14 +301,15 @@
 
       elements.push({
         exportIndex: indexes ? indexes[position] : position + 1,
+        _z: indexes ? indexes[position] : position + 1,
         placeId: element.PlaceId === undefined || element.PlaceId === null ? "" : element.PlaceId,
         name: typeof element.Name === "string" ? element.Name : "",
         note: typeof element.Note === "string" ? element.Note : "",
         image: typeof element.ImageId === "string" ? element.ImageId : "",
         markers: markers,
         color: toColor(element.Color),
-        x: clamp01(Number(scale[0])),
-        y: clamp01(Number(scale[1])),
+        x: isFinite(Number(scale[0])) ? Number(scale[0]) : 0,
+        y: isFinite(Number(scale[1])) ? Number(scale[1]) : 0,
         exits: Array.isArray(element.Exits)
           ? element.Exits.map(Number).filter(function (id) { return isFinite(id); })
           : []
@@ -383,6 +387,7 @@
   function setData(elements, meta) {
     state.elements = elements;
     state.byExport = new Map(elements.map(function (element) { return [element.exportIndex, element]; }));
+    zCounter = elements.length;
     state.selected = null;
     state.query = "";
     state.meta = meta || { placeId: "", placeName: "", exportedAt: "" };
@@ -431,8 +436,8 @@
       return { x: element._px, y: element._py };
     }
     return {
-      x: PAD + element.x * (BASE_W - PAD * 2),
-      y: PAD + element.y * (BASE_H - PAD * 2)
+      x: element.x * MAP_W * COORD_SCALE,
+      y: element.y * MAP_H * COORD_SCALE
     };
   }
 
@@ -503,7 +508,7 @@
       });
     });
 
-    state.elements.forEach(function (element) {
+    state.elements.slice().sort(function (a, b) { return a._z - b._z; }).forEach(function (element) {
       var position = worldPos(element);
       var matches = query !== "" && haystack(element).indexOf(query) !== -1;
 
@@ -518,30 +523,36 @@
         y: -NODE_H / 2,
         width: NODE_W,
         height: NODE_H,
-        rx: 12,
+        rx: 9,
         fill: "#f4f4f8",
         stroke: element.color,
         "stroke-width": 4
       }, group);
 
-      svgNode("text", {
+      var idText = String(element.placeId || "?");
+      var idNode = svgNode("text", {
         x: 0,
-        y: 5,
+        y: -4,
         "text-anchor": "middle",
         "font-family": "Segoe UI, Roboto, sans-serif",
-        "font-size": 13,
+        "font-size": 10,
         fill: "#3c3f52",
         "font-weight": 600
-      }, group).textContent = String(element.placeId || "?");
+      }, group);
+      idNode.textContent = idText;
+      if (idText.length >= 6) {
+        idNode.setAttribute("textLength", NODE_W - 10);
+        idNode.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      }
 
-      var lines = wrap(element.name, 22);
+      var lines = wrap(element.name, 14);
       lines.forEach(function (line, index) {
         svgNode("text", {
           x: 0,
-          y: NODE_H / 2 + 20 + index * 16,
+          y: NODE_H / 2 + 18 + index * 14,
           "text-anchor": "middle",
           "font-family": "Segoe UI, Roboto, sans-serif",
-          "font-size": 14,
+          "font-size": 12,
           fill: "#f1f2f6",
           "font-weight": 600,
           stroke: "#0b0b12",
@@ -557,8 +568,8 @@
           return;
         }
         svgNode("rect", {
-          x: NODE_W / 2 - 20 - index * 17,
-          y: -NODE_H / 2 + 7,
+          x: -NODE_W / 2 + 6 + index * 17,
+          y: NODE_H / 2 - 19,
           width: 12,
           height: 12,
           rx: 3,
@@ -628,6 +639,9 @@
   function select(index) {
     var element = state.byExport.get(index);
     state.selected = element ? element.exportIndex : null;
+    if (element) {
+      bump(element);
+    }
     render();
     renderPanel();
   }
@@ -765,7 +779,7 @@
     });
 
     if (!isFinite(minX)) {
-      return { minX: 0, minY: 0, width: BASE_W, height: BASE_H };
+      return { minX: 0, minY: 0, width: MAP_W * COORD_SCALE, height: MAP_H * COORD_SCALE };
     }
 
     var padding = 70;
@@ -1031,6 +1045,13 @@
     });
 
     document.getElementById("fit").addEventListener("click", fit);
+    document.getElementById("reset").addEventListener("click", function () {
+      state.elements.forEach(function (element) {
+        element._px = null;
+        element._py = null;
+      });
+      fit();
+    });
     document.getElementById("svg").addEventListener("click", downloadSvg);
     document.getElementById("png").addEventListener("click", downloadPng);
 
@@ -1094,6 +1115,7 @@
     getMatches: getMatches,
     getStats: getStats,
     buildStandaloneSvg: buildStandaloneSvg,
+    constants: { MAP_W: MAP_W, MAP_H: MAP_H, COORD_SCALE: COORD_SCALE, NODE: NODE_H },
     fit: fit,
     render: render,
     state: state
