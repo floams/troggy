@@ -167,6 +167,23 @@
   @media (max-width: 760px) {
     #panel { display: none; }
   }
+  #doc { display: none; }
+  @media print {
+    @page { margin: 12mm; }
+    header, main, #dropping, #hint, #legend { display: none !important; }
+    body { display: block; background: #fff; color: #111; overflow: visible; height: auto; }
+    #doc { display: block; padding: 0; }
+    #doc h1 { font-size: 22px; margin: 0 0 4px; }
+    #doc h2 { font-size: 15px; margin: 18px 0 6px; }
+    #doc .doc-meta { color: #444; font-size: 12px; margin: 0 0 12px; }
+    #doc .doc-map { margin: 0 0 14px; }
+    #doc .doc-map svg { width: 100%; height: auto; }
+    #doc table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+    #doc th, #doc td { border: 1px solid #bbb; padding: 3px 5px; text-align: left; vertical-align: top; }
+    #doc thead { display: table-header-group; }
+    #doc tr { page-break-inside: avoid; }
+    #doc td.note { white-space: pre-wrap; }
+  }
 </style>
 </head>
 <body>
@@ -185,6 +202,7 @@
   <button id="reset" class="btn" type="button">Reset layout</button>
   <button id="svg" class="btn" type="button">Download SVG</button>
   <button id="png" class="btn" type="button">Download PNG</button>
+  <button id="print" class="btn" type="button">Save as PDF</button>
 </header>
 
 <main>
@@ -201,6 +219,7 @@
   <aside id="panel"></aside>
 </main>
 <div id="dropping">drop map-export.txt or .json</div>
+<div id="doc"></div>
 
 <script>
 (function () {
@@ -211,8 +230,9 @@
   var MAP_W = 944;
   var MAP_H = 506;
   var COORD_SCALE = 2.2;
-  var NODE_W = 62;
-  var NODE_H = 62;
+  var NODE_W = 96;
+  var NODE_H = 96;
+  var LABEL_FONT = 13;
   var SVG_NS = "http://www.w3.org/2000/svg";
 
   var MARKERS = {
@@ -503,9 +523,8 @@
     }
 
     var query = state.query.trim().toLowerCase();
-    // like a real map: only show the detail that is readable at this zoom
-    var showLabels = state.view.k >= 0.35;
-    var showIds = state.view.k >= 0.18;
+    // ids live in world space, names are drawn in screen space so they stay readable
+    var showIds = state.view.k >= 0.14;
 
     state.elements.forEach(function (source) {
       source.exits.forEach(function (exitIndex) {
@@ -552,34 +571,15 @@
           y: -4,
           "text-anchor": "middle",
           "font-family": "Segoe UI, Roboto, sans-serif",
-          "font-size": 10,
+          "font-size": 17,
           fill: "#3c3f52",
-          "font-weight": 600
+          "font-weight": 700
         }, group);
         idNode.textContent = idText;
         if (idText.length >= 6) {
-          idNode.setAttribute("textLength", NODE_W - 10);
+          idNode.setAttribute("textLength", NODE_W - 16);
           idNode.setAttribute("lengthAdjust", "spacingAndGlyphs");
         }
-      }
-
-      if (showLabels) {
-        var lines = wrap(element.name, 14);
-        lines.forEach(function (line, index) {
-          svgNode("text", {
-            x: 0,
-            y: NODE_H / 2 + 18 + index * 14,
-            "text-anchor": "middle",
-            "font-family": "Segoe UI, Roboto, sans-serif",
-            "font-size": 12,
-            fill: "#f1f2f6",
-            "font-weight": 600,
-            stroke: "#0b0b12",
-            "stroke-width": 5,
-            "stroke-linejoin": "round",
-            "paint-order": "stroke"
-          }, group).textContent = line;
-        });
       }
 
       element.markers.forEach(function (markerId, index) {
@@ -623,7 +623,80 @@
       attachNodeEvents(group, element);
     });
 
+    renderLabels(query);
     updateStats();
+  }
+
+  function truncateLabel(text, limit) {
+    var max = limit || 26;
+    var value = String(text === undefined || text === null ? "" : text);
+    return value.length > max ? value.slice(0, max - 1) + "\u2026" : value;
+  }
+
+  function drawScreenLabel(text, x, baseline, color) {
+    svgNode("text", {
+      x: x,
+      y: baseline,
+      "text-anchor": "middle",
+      "font-family": "Segoe UI, Roboto, sans-serif",
+      "font-size": LABEL_FONT,
+      "font-weight": 700,
+      fill: color,
+      stroke: "#07070c",
+      "stroke-width": 4,
+      "stroke-linejoin": "round",
+      "paint-order": "stroke"
+    }, dom.labelLayer).textContent = text;
+  }
+
+  // labels are drawn in screen space so they stay the same readable size at any zoom
+  function renderLabels(query) {
+    if (!dom.labelLayer) {
+      return;
+    }
+
+    while (dom.labelLayer.firstChild) {
+      dom.labelLayer.removeChild(dom.labelLayer.firstChild);
+    }
+
+    var width = dom.stage.clientWidth || 1200;
+    var height = dom.stage.clientHeight || 800;
+    var placed = [];
+    var ordered = state.elements.slice().sort(function (a, b) { return b._z - a._z; });
+
+    ordered.forEach(function (element) {
+      var position = worldPos(element);
+      var screenX = position.x * state.view.k + state.view.x;
+      var screenY = position.y * state.view.k + state.view.y;
+
+      if (screenX < -140 || screenX > width + 140 || screenY < -80 || screenY > height + 90) {
+        return;
+      }
+
+      var isSelected = state.selected === element.exportIndex;
+      var isMatch = query !== "" && haystack(element).indexOf(query) !== -1;
+      var label = truncateLabel(element.name || String(element.placeId), isSelected ? 40 : 26);
+      var textWidth = Math.max(LABEL_FONT * 2, label.length * LABEL_FONT * 0.58);
+      var box = {
+        x: screenX - textWidth / 2,
+        y: screenY + (NODE_H * state.view.k) / 2 + 4,
+        w: textWidth,
+        h: LABEL_FONT + 6
+      };
+
+      if (!isSelected && !isMatch) {
+        var blocked = placed.some(function (other) {
+          return box.x < other.x + other.w && box.x + box.w > other.x
+            && box.y < other.y + other.h && box.y + box.h > other.y;
+        });
+        if (blocked) {
+          return;
+        }
+      }
+
+      placed.push(box);
+      drawScreenLabel(label, screenX, box.y + LABEL_FONT, isSelected || isMatch ? "#ffe58a" : "#e7e9f4");
+    });
   }
 
   function haystack(element) {
@@ -988,22 +1061,112 @@
     }, { passive: false });
   }
 
-  function buildStandaloneSvg(scale) {
-    scale = scale || 1;
-    var bounds = contentBounds();
-    var clone = dom.world.cloneNode(true);
+  function round2(value) {
+    return Math.round(value * 100) / 100;
+  }
 
-    clone.removeAttribute("transform");
-    clone.querySelectorAll(".node").forEach(function (node) {
-      node.classList.remove("selected", "match");
-    });
-    clone.querySelectorAll(".ring").forEach(function (ring) {
-      ring.remove();
-    });
+  function exportPixelSize(bounds) {
+    var target = 2400;
+    var ratio = Math.min(3, Math.max(0.1, target / Math.max(bounds.width, bounds.height)));
+    var width = Math.max(800, Math.round(bounds.width * ratio));
+    var height = Math.max(600, Math.round(bounds.height * ratio));
+    var biggest = Math.max(width, height);
+    var maxSide = 3000;
 
-    var width = Math.round(bounds.width * scale);
-    var height = Math.round(bounds.height * scale);
+    if (biggest > maxSide) {
+      width = Math.round(width * (maxSide / biggest));
+      height = Math.round(height * (maxSide / biggest));
+    }
+
+    return { width: width, height: height };
+  }
+
+  // draws the map from the data, not from the live view, so exports always frame
+  // the bulk of the map and never depend on zoom, pan or selection
+  function buildStandaloneSvg() {
     var stats = getStats();
+
+    if (!state.elements.length) {
+      return '<svg xmlns="' + SVG_NS + '" width="900" height="460" viewBox="0 0 900 460">'
+        + '<rect width="900" height="460" fill="#07070c"></rect>'
+        + '<text x="450" y="230" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="18" fill="#8f93aa">no map data</text></svg>';
+    }
+
+    var bounds = fitBounds();
+    var pixels = exportPixelSize(bounds);
+    var unit = bounds.width / pixels.width;
+    var stroke = 2.4 * unit;
+    var idFont = 17 * unit;
+    var labelFont = 19 * unit;
+    var markerSize = 13 * unit;
+    var parts = [];
+
+    parts.push('<svg xmlns="' + SVG_NS + '" width="' + pixels.width + '" height="' + pixels.height
+      + '" viewBox="' + round2(bounds.minX) + " " + round2(bounds.minY) + " " + round2(bounds.width) + " " + round2(bounds.height) + '">');
+    parts.push('<rect x="' + round2(bounds.minX) + '" y="' + round2(bounds.minY) + '" width="' + round2(bounds.width)
+      + '" height="' + round2(bounds.height) + '" fill="#07070c"></rect>');
+    parts.push(arrowDefs());
+
+    state.elements.forEach(function (source) {
+      source.exits.forEach(function (exitIndex) {
+        var target = state.byExport.get(exitIndex);
+        if (!target) {
+          return;
+        }
+        parts.push('<path d="' + edgePath(worldPos(source), worldPos(target))
+          + '" fill="none" stroke="#8b8fa3" stroke-width="' + round2(stroke) + '" marker-end="url(#arrow)"></path>');
+      });
+    });
+
+    var labelBoxes = [];
+    var ordered = state.elements.slice().sort(function (a, b) { return a._z - b._z; });
+
+    ordered.forEach(function (element) {
+      var position = worldPos(element);
+      var left = position.x - NODE_W / 2;
+      var top = position.y - NODE_H / 2;
+
+      parts.push('<rect x="' + round2(left) + '" y="' + round2(top) + '" width="' + NODE_W + '" height="' + NODE_H
+        + '" rx="12" fill="#f4f4f8" stroke="' + element.color + '" stroke-width="' + round2(stroke * 1.8) + '"></rect>');
+
+      parts.push('<text x="' + round2(position.x) + '" y="' + round2(position.y + idFont * 0.34)
+        + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(idFont)
+        + '" font-weight="700" fill="#3c3f52" textLength="' + round2(NODE_W - 18) + '" lengthAdjust="spacingAndGlyphs">'
+        + escapeXml(element.placeId) + '</text>');
+
+      element.markers.forEach(function (markerId, index) {
+        var info = MARKERS[markerId];
+        if (!info) {
+          return;
+        }
+        parts.push('<rect x="' + round2(left + 8 + index * (markerSize + 4)) + '" y="'
+          + round2(position.y + NODE_H / 2 - markerSize - 8) + '" width="' + round2(markerSize) + '" height="'
+          + round2(markerSize) + '" rx="3" fill="' + info.color + '" stroke="#07070c" stroke-width="'
+          + round2(stroke * 0.6) + '"></rect>');
+      });
+
+      var label = truncateLabel(element.name || String(element.placeId), 30);
+      var textWidth = Math.max(labelFont * 2, label.length * labelFont * 0.58);
+      var box = {
+        x: position.x - textWidth / 2,
+        y: position.y + NODE_H / 2 + 8,
+        w: textWidth,
+        h: labelFont * 1.4
+      };
+      var blocked = labelBoxes.some(function (other) {
+        return box.x < other.x + other.w && box.x + box.w > other.x
+          && box.y < other.y + other.h && box.y + box.h > other.y;
+      });
+
+      if (!blocked) {
+        labelBoxes.push(box);
+        parts.push('<text x="' + round2(position.x) + '" y="' + round2(box.y + labelFont)
+          + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(labelFont)
+          + '" font-weight="700" fill="#f1f2f6" stroke="#07070c" stroke-width="' + round2(labelFont * 0.3)
+          + '" stroke-linejoin="round" paint-order="stroke">' + escapeXml(label) + '</text>');
+      }
+    });
+
     var caption = [];
     if (state.meta.placeId) {
       caption.push("place " + state.meta.placeId);
@@ -1014,16 +1177,12 @@
       caption.push(state.meta.exportedAt);
     }
 
-    return '<svg xmlns="' + SVG_NS + '" width="' + width + '" height="' + height
-      + '" viewBox="' + bounds.minX + " " + bounds.minY + " " + bounds.width + " " + bounds.height + '">'
-      + '<rect x="' + bounds.minX + '" y="' + bounds.minY + '" width="' + bounds.width + '" height="' + bounds.height + '" fill="#0b0b12"></rect>'
-      + arrowDefs()
-      + clone.innerHTML
-      + '<text x="' + (bounds.minX + 24) + '" y="' + (bounds.minY + bounds.height - 22)
-      + '" font-family="Segoe UI, Roboto, sans-serif" font-size="16" fill="#7c8095">'
-      + escapeXml(caption.join("  \u00b7  "))
-      + "</text>"
-      + "</svg>";
+    parts.push('<text x="' + round2(bounds.minX + 20 * unit) + '" y="' + round2(bounds.minY + bounds.height - 22 * unit)
+      + '" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(17 * unit) + '" fill="#7c8095">'
+      + escapeXml(caption.join("  \u00b7  ")) + "</text>");
+
+    parts.push("</svg>");
+    return parts.join("");
   }
 
   function escapeXml(text) {
@@ -1032,6 +1191,55 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function buildDocument() {
+    var stats = getStats();
+    var meta = [];
+
+    if (state.meta.placeId) {
+      meta.push("place " + state.meta.placeId + (state.meta.placeName ? " (" + state.meta.placeName + ")" : ""));
+    }
+    if (state.meta.exportedAt) {
+      meta.push("exported " + state.meta.exportedAt);
+    }
+    meta.push(stats.elements + " elements");
+    meta.push(stats.connections + " connections");
+
+    var rows = state.elements.slice().sort(function (a, b) { return a._z - b._z; }).map(function (element) {
+      var exits = element.exits.map(function (id) {
+        var other = state.byExport.get(id);
+        return other ? "#" + other.exportIndex : null;
+      }).filter(function (value) { return value !== null; }).join(", ");
+
+      var markers = element.markers.map(function (id) {
+        return MARKERS[id] ? MARKERS[id].name : "";
+      }).join(", ");
+
+      return "<tr><td>" + element.exportIndex + "</td><td>" + escapeXml(element.placeId) + "</td><td>"
+        + escapeXml(element.name) + "</td><td>" + (element.x * 100).toFixed(2) + "%, "
+        + (element.y * 100).toFixed(2) + "%</td><td>" + escapeXml(markers) + "</td><td>"
+        + escapeXml(exits) + "</td><td class=\"note\">" + escapeXml(element.note) + "</td></tr>";
+    }).join("");
+
+    return "<h1>Map export</h1>"
+      + '<p class="doc-meta">' + escapeXml(meta.join("  \u00b7  ")) + "</p>"
+      + '<div class="doc-map">' + buildStandaloneSvg() + "</div>"
+      + "<h2>Elements (" + stats.elements + ")</h2>"
+      + "<table><thead><tr><th>#</th><th>place id</th><th>name</th><th>position</th><th>markers</th><th>exits</th><th>note</th></tr></thead><tbody>"
+      + rows
+      + "</tbody></table>";
+  }
+
+  function printDocument() {
+    if (!state.elements.length) {
+      return;
+    }
+    if (!dom.doc) {
+      dom.doc = document.getElementById("doc");
+    }
+    dom.doc.innerHTML = buildDocument();
+    window.print();
   }
 
   function download(filename, blob) {
@@ -1055,7 +1263,7 @@
     if (!state.elements.length) {
       return;
     }
-    var svgText = buildStandaloneSvg(1);
+    var svgText = buildStandaloneSvg();
     download(baseName() + ".svg", new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }));
   }
 
@@ -1064,30 +1272,42 @@
       return;
     }
 
-    var svgText = buildStandaloneSvg(2);
+    var svgText = buildStandaloneSvg();
     var blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
     var url = URL.createObjectURL(blob);
     var image = new Image();
 
     image.onload = function () {
+      var width = Math.min(3000, image.naturalWidth || 2400);
+      var height = Math.min(3000, image.naturalHeight || 1600);
       var canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth || 1600;
-      canvas.height = image.naturalHeight || 1000;
+      canvas.width = width;
+      canvas.height = height;
+
       var context = canvas.getContext("2d");
-      context.fillStyle = "#0b0b12";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0);
+      if (!context) {
+        URL.revokeObjectURL(url);
+        alert("This browser could not draw the PNG. Use Download SVG or Save as PDF instead.");
+        return;
+      }
+
+      context.fillStyle = "#07070c";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+
       canvas.toBlob(function (png) {
+        URL.revokeObjectURL(url);
         if (png) {
           download(baseName() + ".png", png);
+        } else {
+          alert("This browser could not make the PNG. Use Download SVG or Save as PDF instead.");
         }
-        URL.revokeObjectURL(url);
       }, "image/png");
     };
 
     image.onerror = function () {
       URL.revokeObjectURL(url);
-      alert("Could not render the PNG in this browser. Use Download SVG instead.");
+      alert("Could not render the PNG in this browser. Use Download SVG or Save as PDF instead.");
     };
 
     image.src = url;
@@ -1111,6 +1331,7 @@
     dom.search = document.getElementById("search");
     dom.stats = document.getElementById("stats");
     dom.zoom = document.getElementById("zoom");
+    dom.doc = document.getElementById("doc");
     dom.empty = document.getElementById("empty");
     dom.file = document.getElementById("file");
 
@@ -1123,6 +1344,7 @@
     var style = document.createElementNS(SVG_NS, "style");
     style.textContent = ".node{cursor:grab}.node .ring{display:none}.node.selected .ring{display:block}";
     dom.svg.appendChild(style);
+    dom.labelLayer = svgNode("g", { id: "labels" }, dom.svg);
 
     var legend = document.getElementById("legend");
     Object.keys(MARKERS).forEach(function (id) {
@@ -1166,6 +1388,7 @@
     });
     document.getElementById("svg").addEventListener("click", downloadSvg);
     document.getElementById("png").addEventListener("click", downloadPng);
+    document.getElementById("print").addEventListener("click", printDocument);
 
     window.addEventListener("keydown", function (event) {
       var tag = (event.target && event.target.tagName) || "";
@@ -1227,6 +1450,7 @@
     getMatches: getMatches,
     getStats: getStats,
     buildStandaloneSvg: buildStandaloneSvg,
+    buildDocument: buildDocument,
     constants: { MAP_W: MAP_W, MAP_H: MAP_H, COORD_SCALE: COORD_SCALE, NODE: NODE_H },
     fit: fit,
     render: render,
