@@ -169,23 +169,11 @@
   }
   #doc { display: none; }
   @media print {
-    @page { margin: 12mm; }
+    @page { size: A4 landscape; margin: 10mm; }
     header, main, #dropping, #hint, #legend { display: none !important; }
     body { display: block; background: #fff; color: #111; overflow: visible; height: auto; }
-    #doc { display: block; padding: 0; }
-    #doc h1 { font-size: 22px; margin: 0 0 4px; }
-    #doc h2 { font-size: 15px; margin: 18px 0 6px; }
-    #doc .doc-meta { color: #444; font-size: 12px; margin: 0 0 12px; }
-    #doc .doc-map { margin: 0 0 14px; }
-    #doc .doc-map svg { width: 100%; height: auto; }
-    #doc .doc-legend { font-size: 10px; color: #444; margin: 0 0 14px; line-height: 1.5; }
-    #doc .doc-legend p { margin: 2px 0; }
-    #doc table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
-    #doc th, #doc td { border: 1px solid #bbb; padding: 3px 5px; text-align: left; vertical-align: top; }
-    #doc thead { display: table-header-group; }
-    #doc tr { page-break-inside: avoid; }
-    #doc td.note { white-space: pre-wrap; }
   }
+
 </style>
 </head>
 <body>
@@ -205,6 +193,7 @@
   <button id="svg" class="btn" type="button">Download SVG</button>
   <button id="png" class="btn" type="button">Download PNG</button>
   <button id="print" class="btn" type="button">Save as PDF</button>
+  <button id="docx" class="btn" type="button">Save as DOC</button>
   <button id="portals" class="btn" type="button">Portals: off</button>
 </header>
 
@@ -1520,8 +1509,135 @@
       .replace(/"/g, "&quot;");
   }
 
+
+  // world list of the map document ("Steel's home Map.pdf"), flattened the way it
+  // appears there: used to flag worlds that the document does not list
+  var DOC_ROSTER = [
+    '> home > nexus 777hou small inconvenienceLakeside Town Somewhere far over the horizon granite',
+    'cove Can we get a cup of coffee? fish bowl North Pole hidden shore Rat hole Exterior PORTAL TO',
+    'SWEETCORN SNOWDRIFT extension AN ERROR HAS OCCURED campfire Rehsif Town rocking world big',
+    'mountainBANLAND tophet Dismembrance Third Stage of Grief Dead Space bunker Rotund Inc.',
+    'Headquarters gone in the morning WORLDS COLLIDE testing_region eenzaame toren Canvas Greyshift',
+    'Kontrived Perfunctory Anima facadus gladi the soda space One Door. Simple, Easy, and Fun!',
+    'facadus gladi EX quarr-i COLATOSE oil rig the finite road where Knight Night nvm! PORTAL TO THE',
+    'SODA SPACE PORTAL TO THE SODA SPACE perilous pipeway Bustling Town volcanic pit Innerspace',
+    'banana forest Please Wait thus far and thus advancement’s end PORTAL TO THE GOAL IS SIMPLE',
+    'foreign force xXSlayerXx’s Challenge welcometotheshow! Office Complex spriral sanctuary',
+    'unwanted_Town Hydrocortisone transitional space C Sensory Shifted Alleyway sunyata Road Blocks',
+    'Headquarters party space the great inferno 77hou Crypt Sunset Castle Home… REBORN! The Room ; An',
+    'Interview Grove Questionable Within The Tomb Surface World a world on fire Polar Plateau A',
+    'Reflection out of bounds Subway HOME TYCOON!!! fish city fish factory remains fish bank under',
+    'the sea C-Floor climb fish for fish fish jail aLTa:aQUa trusS worlD Pisces! PORTAL TO A WORLD ON',
+    'FIRE PORTAL TO A WORLD ON FIRE PORTAL TO A WORLD ON FIRE PORTAL TO A WORLD ON FIRE PORTAL TO A',
+    'WORLD ON FIRE Viruz. Super Easy Impossible Obby [27 Stages!!!] Cyan Constructs HIRAETH Lights?',
+    'shrine Atlas Laboratory Major Respite Atlas Laboratory Minor Corn flake rescue mission! cylinder',
+    'world spawnpoints Mt eRror downpour spawn limbo DisPlaced for the tired Wrong turn First Stage',
+    'of Grief orchid garden Mystical Ocean vile swamp WEEGEE HORROR evergold Beehive World spawn',
+    'factory INTO THE MAINFRAME random decal gallery Wilted Tower Sunstone Park purgatory PORTAL TO A',
+    'WORLD ON FIRE box o bark gum world THE WALTERVERSE formica butterball PORTAL TO > HOME PORTAL TO',
+    '> HOME balls world FOR THE: yin and yang what lies beyond what lies beneath the goal is simple',
+    'PORTAL TO THE GOAL IS SIMPLE Elysium PILLAR WORLD Balance +- Asphodel ANGELS SECRET HIDEOUT GET',
+    'OUT JUST A BAD DREAM TartarusPORTAL TO A WORLD ON FIRE crystalline canyon :( FOURTH WALL abyss',
+    're: FOURTH WALL Black and White whitespace blackspace Oasis the dungeon forgotten seabed inpeace',
+    'ethereal cliffs thalassophobia Midnight Tide Desert O’ Nightmares Jagged + Constructs Marigold',
+    'Tapestry Stale Greenhouse Shoot For The Stars chilled warehouse sun-bathed crossing PORTAL TO A',
+    'WORLD ON FIRE blizzard’d Shattered Glacier Permafrost aspen Climb of Truism In E-Flat Minor',
+    'aokabe Indepth, Undone PROTEST Serenity Jungle PORTAL TO A WORLD ON FIRE candle world',
+    'transitional space B Sector Drift inviral’s racing course Volcano City lab The Zone TRAP capture',
+    'the joeCITY STREET cart ride homeLIMINALITYneon city!!! THE office shattered skyscape world as a',
+    'whole the void anthropocentrism. big hot UH OH!!! privacy is a myth palisades coconut isles I',
+    'Didn’t Catch Your Name hellhou Hiker’s Hell Stonebound, Flowerhenge Stonesurge, Calm before the',
+    'Storm Inviral’s Place: 04072024_9 indiscernible prosperity Phthalo Green Basillica hyperion YOU',
+    'WILL NEED THIS the gaming party 9 V?V? static incorporated falter tempo heart afterparty GUILTY',
+    '7hou for the lost flippant home of the blue ??? flora, et fauna PORTAL TO HIRAETH overgrowth',
+    'Lost Forest Sovereign Site: The Tomb of Kings Starry Night flidora Land of the Water Snakes',
+    'drown fishes gallery a worId on fire beyond the moon Doodoo World Modelling Clay Grounds the',
+    'horror in the woods PORTAL TO A WORLD ON FIRE PORTAL TO A WORLD ON FIRE PORTAL TO QUARR-I PORTAL',
+    'TO QUARR-I PORTAL TO A WORI D ON FIRE PORTAL TO A WORI D ON FIRE mt. rumble electric temple rise',
+    'to the occasion Loud Quiet World Crossroads Sand World SiroccoStone World Piano Room the world',
+    'hereafter far exodus prophetic dream Void Worldwhomever PORTAL TO BUSTLING TOWN PORTAL TO',
+    'BUSTLING TOWN dracula’s COOL castle goobie graveyard Contradiction paradoxa frigidus venusian',
+    'discotheque plastic matrix sweetcorn snowdrift Dam The overt edge of oblivionPolar Pathways',
+    'Hiker’s Limbo PORTAL TO TEMPO HEART PORTAL TO TEMPO HEART transitional space A GUESS THE',
+    'CHARACTER (192) 11:59 PM themland Worlds Hardest Obby a place where you could relax cerebellum',
+    'plexiglass GAMER LAND Nandos World Cheat_Code press the button!!! A Moment, Fractured. A Moment,',
+    'Whole. nostalgia land Sword Fight On The Heights! impasse EYELOVEU luminosity YHARON LAND!!!!!',
+    'the path least taken inactive volcanic mines PORTAL TO SWEETCORN SNOWDRIFT > pvp world> GEAR',
+    'TESTER WORLD > dev hub world! ant foreign force EX > bonus world!!! The Red Room ; Interview',
+    'Inverted Forest the goal is simple EX > Epilogue > home rpg the dark side of the moondirt road :',
+    'iron valley PORTAL TO PERILOUS PIPEWAY PORTAL TO PERILOUS PIPEWAY PORTAL TO > HOME PORTAL TO >',
+    'HOME'
+  ].join(' ');
+
+  // the document's names run together and a few were read with an l/i mix-up, so
+  // both sides are folded down to bare letters and digits before they are compared
+  function foldName(text) {
+    return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/i/g, 'l');
+  }
+
+  var rosterKey = null;
+
+  function rosterText() {
+    if (rosterKey === null) {
+      rosterKey = foldName(DOC_ROSTER);
+    }
+    return rosterKey;
+  }
+
+  function inMapDocument(element) {
+    var key = foldName(element.name);
+    return key.length > 2 && rosterText().indexOf(key) !== -1;
+  }
+
+  // the map's key card is a legend note, not a world
+  function isDocumentWorld(element) {
+    if (isPortal(element)) {
+      return false;
+    }
+    return !(/^key$/i.test(String(element.name || '').trim()) && element.note);
+  }
+
+  // map reading order, so the list under the map follows the poster left to right
+  function documentWorlds() {
+    return visibleElements().filter(isDocumentWorld).slice().sort(function (a, b) {
+      var rowA = Math.round(a.y / 0.06);
+      var rowB = Math.round(b.y / 0.06);
+      if (rowA !== rowB) {
+        return rowA - rowB;
+      }
+      return a.x - b.x;
+    });
+  }
+
+  var DOC_CSS = '#doc{display:block;padding:0;color:#111;background:#fff;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif}'
+    + '#doc h1{font-size:20px;margin:0 0 2px}'
+    + '#doc h2{font-size:12px;margin:14px 0 5px;text-transform:uppercase;letter-spacing:.08em}'
+    + '#doc .doc-meta{color:#555;font-size:11px;margin:0 0 10px}'
+    + '#doc .doc-map{margin:0 0 10px}'
+    + '#doc .doc-map svg{width:100%;height:auto;display:block}'
+    + '#doc .doc-worlds{columns:5;column-gap:10px;font-size:9.5px;line-height:1.5}'
+    + '#doc .doc-world{display:block;break-inside:avoid;border-left:2px solid #888;padding:0 0 0 4px;margin:0 0 1px}'
+    + '#doc .doc-world-missing{color:#c00000;border-left-color:#c00000;background:#ffecec;font-weight:700}'
+    + '#doc .doc-missing{border:1px solid #c00000;background:#fff2f2;color:#a80000;font-size:10px;line-height:1.5;padding:6px 9px;margin:10px 0 0;break-inside:avoid}'
+    + '#doc .doc-missing b{display:block;margin-bottom:2px}'
+    + '#doc .doc-legend{font-size:9.5px;color:#333;line-height:1.5;margin:10px 0 0}'
+    + '#doc .doc-legend p{margin:2px 0}'
+    + '#doc .doc-notes{font-size:9px;color:#555;line-height:1.5;margin:8px 0 0}'
+    + '#doc .doc-notes p{margin:2px 0}';
+
+  function documentFile() {
+    return '<!doctype html><html><head><meta charset="utf-8"><title>'
+      + escapeXml('map ' + (state.meta.placeId || 'export') + ' document')
+      + '</title><style>' + DOC_CSS + '@page{size:A4 landscape;margin:10mm}</style></head><body><div id="doc">'
+      + buildDocument() + '</div></body></html>';
+  }
+
   function buildDocument() {
     var stats = getStats();
+    var worlds = documentWorlds();
+    var missing = worlds.filter(function (element) {
+      return !inMapDocument(element);
+    });
     var meta = [];
 
     if (state.meta.placeId) {
@@ -1530,35 +1646,54 @@
     if (state.meta.exportedAt) {
       meta.push("exported " + state.meta.exportedAt);
     }
-    meta.push(stats.elements + " elements");
+    meta.push(worlds.length + " worlds");
     meta.push(stats.connections + " connections");
 
-    var rows = visibleElements().slice().sort(function (a, b) { return a._z - b._z; }).map(function (element) {
-      var exits = element.exits.map(function (id) {
-        var other = state.byExport.get(id);
-        return other ? "#" + other.exportIndex : null;
-      }).filter(function (value) { return value !== null; }).join(", ");
-
-      var markers = element.markers.map(function (id) {
-        return MARKERS[id] ? MARKERS[id].name : "";
-      }).join(", ");
-
-      return "<tr><td>" + element.exportIndex + "</td><td>" + escapeXml(element.placeId) + "</td><td>"
-        + escapeXml(element.name) + "</td><td>" + (element.x * 100).toFixed(2) + "%, "
-        + (element.y * 100).toFixed(2) + "%</td><td>" + escapeXml(markers) + "</td><td>"
-        + escapeXml(exits) + "</td><td class=\"note\">" + escapeXml(element.note) + "</td></tr>";
+    var chips = worlds.map(function (element) {
+      var name = String(element.name || "").trim();
+      var isMissing = !inMapDocument(element);
+      return '<span class="doc-world' + (isMissing ? " doc-world-missing" : "") + '"'
+        + ' style="border-left-color:' + escapeXml(element.color || "#888") + '">'
+        + escapeXml(name || "(unnamed " + element.placeId + ")")
+        + "</span>";
     }).join("");
 
-    return "<h1>Map export</h1>"
+    var missingNames = missing.map(function (element) {
+      return escapeXml(String(element.name || "").trim() || "(unnamed " + element.placeId + ")");
+    });
+
+    var missingBlock = missing.length
+      ? '<div class="doc-missing"><b>Not in the map document (' + missing.length + ")</b>"
+        + "On your map but missing from the document, so they are red in the list above: "
+        + missingNames.join(" &middot; ") + "</div>"
+      : "";
+
+    return "<h1>Map document</h1>"
       + '<p class="doc-meta">' + escapeXml(meta.join("  \u00b7  ")) + "</p>"
       + '<div class="doc-map">' + buildStandaloneSvg() + "</div>"
-      + '<div class="doc-legend"><p><strong>Legend</strong> &mdash; small squares on a world mark a DeadEnd, Badge or AltExit. Red text on the map marks worlds that are hard to reach.</p>'
-      + "<p>Portals are not actual worlds; they only link worlds with more than one entrance, so they are left off this map. "
-      + stats.portals + " portal nodes hidden, " + stats.markers + " markers, " + stats.notes + " notes.</p></div>"
-      + "<h2>Worlds (" + stats.elements + ")</h2>"
-      + "<table><thead><tr><th>#</th><th>place id</th><th>name</th><th>position</th><th>markers</th><th>exits</th><th>note</th></tr></thead><tbody>"
-      + rows
-      + "</tbody></table>";
+      + "<h2>Worlds (" + worlds.length + ")</h2>"
+      + '<div class="doc-worlds">' + chips + "</div>"
+      + missingBlock
+      + '<div class="doc-legend">'
+      + "<p><strong>Legend</strong> &mdash; every square on the map above is one world, drawn and named once even when it has several entrances. "
+      + "The bar beside a name is that world's colour on the map: red unfinished, purple dev-hub only, green reachable from the dev hub, "
+      + "orange main places, blue &gt; places.</p>"
+      + "<p>Markers on the map: dead end, badge (more than one means several badges) and alternate exit. "
+      + "Portals are not real worlds; they only exist so a world with several entrances needs one arrow, so they are left out of this document. "
+      + stats.portals + " portal nodes hidden, " + stats.markers + " markers, " + stats.notes + " notes.</p>"
+      + "<p><strong>Red names</strong> are worlds on your map that the map document does not list, so they are easy to spot and fill in.</p>"
+      + "</div>"
+      + '<div class="doc-notes">'
+      + "<p>Built from PlayerGui.MapGui &mdash; read only, nothing in the map was changed.</p>"
+      + "<p>Print or save as PDF to share it. The map is drawn from the data, so it always shows the whole map whatever the zoom level is.</p>"
+      + "</div>";
+  }
+
+  function downloadDocument() {
+    if (!state.elements.length) {
+      return;
+    }
+    download(baseName() + "-document.doc", new Blob([documentFile()], { type: "application/msword" }));
   }
 
   function printDocument() {
@@ -1718,7 +1853,12 @@
     });
     document.getElementById("svg").addEventListener("click", downloadSvg);
     document.getElementById("png").addEventListener("click", downloadPng);
+    var docStyle = document.createElement("style");
+    docStyle.setAttribute("media", "print");
+    docStyle.textContent = DOC_CSS;
+    document.head.appendChild(docStyle);
     document.getElementById("print").addEventListener("click", printDocument);
+    document.getElementById("docx").addEventListener("click", downloadDocument);
     document.getElementById("portals").addEventListener("click", function () {
       state.hidePortals = !state.hidePortals;
       this.textContent = state.hidePortals ? "Portals: off" : "Portals: on";
@@ -1787,6 +1927,9 @@
     getStats: getStats,
     buildStandaloneSvg: buildStandaloneSvg,
     buildDocument: buildDocument,
+    documentWorlds: documentWorlds,
+    inMapDocument: inMapDocument,
+    documentFile: documentFile,
     constants: { MAP_W: MAP_W, MAP_H: MAP_H, COORD_SCALE: COORD_SCALE, NODE: NODE_H },
     fit: fit,
     render: render,
