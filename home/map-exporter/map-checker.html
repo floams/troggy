@@ -89,6 +89,29 @@
   li.item .where b { color: #cfd3ea; font-weight: 600; }
   li.extra { border-left-color: var(--yellow); }
   li.extra .chunk { color: var(--yellow); font-weight: 600; word-break: break-word; }
+  .paste {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    padding: 10px 14px;
+    margin: 0 0 16px;
+  }
+  .paste summary { cursor: pointer; color: #c9cce0; font-size: 12.5px; }
+  .paste summary::marker { color: var(--muted); }
+  .paste textarea {
+    width: 100%;
+    min-height: 120px;
+    margin: 10px 0 8px;
+    background: #0b0b13;
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    resize: vertical;
+  }
+  .paste .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .paste .hint { color: var(--muted); font-size: 12px; }
   .note {
     color: var(--muted);
     font-size: 12px;
@@ -141,6 +164,15 @@
     <p>a <code>.json</code> file with the same element data works too.</p>
     <p>the checker walks the world list of the map document in order, crosses out every world you have mapped, and shows you what is left &mdash; with the worlds that come before and after it, so you can find it in the game.</p>
   </div>
+  <details class="paste" open>
+    <summary>paste the map document's world list (one world per line) for exact results</summary>
+    <textarea id="names" spellcheck="false" placeholder="home&#10;nexus&#10;small inconvenience&#10;Lakeside Town"></textarea>
+    <div class="row">
+      <button id="uselist" class="btn" type="button">Compare with this list</button>
+      <button id="clearlist" class="btn" type="button">Back to the document text</button>
+      <span class="hint">with a list there is one row per world, no guesswork.</span>
+    </div>
+  </details>
   <div id="out"></div>
 </main>
 <div id="dropping">drop map-export.txt or .json</div>
@@ -212,6 +244,7 @@
   var dom = {};
   var worlds = null;
   var result = null;
+  var pastedNames = null;
 
   function foldName(text) {
     return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "").replace(/i/g, "l");
@@ -317,40 +350,108 @@
   }
 
   var MIN_KEY = 3;
+  var PREFIX_KEY = 9;
   var PORTAL_KEY = "portalto";
+  // a portal's target is a world name, so only a few words after "PORTAL TO" are
+  // passed over, never a long stretch of the document
+  var PORTAL_TARGET_WORDS = 4;
+
+  // the document runs its names together, so a run of unmatched text is split
+  // wherever it clearly starts a new name: an ALL CAPS name, or a name that has
+  // digits, underscores or a leading symbol
+  function splitRun(text) {
+    var words = text.split(/\s+/).filter(function (word) { return !!word; });
+    var pieces = [];
+    var current = [];
+    var previousCaps = false;
+    var previousCode = false;
+
+    words.forEach(function (word) {
+      var letters = word.replace(/[^A-Za-z0-9]/g, "");
+      var caps = letters.length >= 3 && letters === letters.toUpperCase();
+      var code = /[0-9_]/.test(word) || /^[^A-Za-z0-9"'(\[]/.test(word);
+
+      if (current.length && ((caps && !previousCaps) || (code && !previousCode))) {
+        pieces.push(current.join(" "));
+        current = [];
+      }
+
+      current.push(word);
+      previousCaps = caps;
+      previousCode = code;
+    });
+
+    if (current.length) {
+      pieces.push(current.join(" "));
+    }
+
+    return pieces;
+  }
 
   function compare(list) {
     var doc = foldDocument();
     var known = {};
+    var prefixes = {};
     var longest = MIN_KEY;
 
     list.forEach(function (world) {
-      if (!world.key || world.key.length < MIN_KEY) {
+      var key = world.key;
+      if (!key || key.length < MIN_KEY) {
         return;
       }
-      known[world.key] = world;
-    });
-
-    Object.keys(known).forEach(function (key) {
+      known[key] = world;
       longest = Math.max(longest, key.length);
+
+      // a name that only differs in its tail ("capture the joe" against
+      // "capture the joe (#s not power till its jawer)") still counts as mapped
+      for (var len = PREFIX_KEY; len < key.length; len += 1) {
+        var head = key.slice(0, len);
+        if (!prefixes[head]) {
+          prefixes[head] = key;
+        }
+      }
     });
 
-    var hit = {};
+    // where each character of the document starts a new word, so a loose match can
+    // be taken to the end of the word it sits in instead of leaving a stub behind
+    var wordStart = [];
+    var previousWasWord = false;
+    for (var c = 0; c < DOC_ROSTER.length; c += 1) {
+      var isWord = /[A-Za-z0-9]/.test(DOC_ROSTER.charAt(c));
+      wordStart.push(isWord && !previousWasWord);
+      previousWasWord = isWord;
+    }
+
+    var hits = {};
 
     function matchAt(index, limit) {
       var size = Math.min(longest, limit - index);
+
       for (var len = size; len >= MIN_KEY; len -= 1) {
-        var key = doc.folded.substr(index, len);
-        if (known[key]) {
-          hit[key] = true;
-          return { key: key, len: len };
+        var chunk = doc.folded.substr(index, len);
+        if (known[chunk]) {
+          hits[chunk] = true;
+          return { key: chunk, len: len };
         }
       }
+
+      for (var head = size; head >= PREFIX_KEY; head -= 1) {
+        var start = doc.folded.substr(index, head);
+        if (prefixes[start]) {
+          hits[prefixes[start]] = true;
+          var end = index + head;
+          while (end < limit && end < doc.indexMap.length && !wordStart[doc.indexMap[end]]) {
+            end += 1;
+          }
+          return { key: prefixes[start], len: end - index };
+        }
+      }
+
       return null;
     }
 
-    // "PORTAL TO X" entries are plumbing in the document, not worlds: they are cut
-    // out before matching so they never show up as something to go and map
+    // "PORTAL TO X" entries are map plumbing, not worlds: they are cut out, and so
+    // is the name right after them, which is the portal's target
     var cuts = [];
     var at = doc.folded.indexOf(PORTAL_KEY);
     while (at !== -1) {
@@ -361,50 +462,86 @@
     var segments = [];
     var start = 0;
     cuts.forEach(function (cut) {
-      segments.push([start, cut]);
+      segments.push({ start: start, end: cut });
       start = cut + PORTAL_KEY.length;
     });
-    segments.push([start, doc.folded.length]);
+    segments.push({ start: start, end: doc.folded.length });
 
     var entries = [];
 
-    segments.forEach(function (segment) {
-      var index = segment[0];
+    segments.forEach(function (segment, position) {
+      var index = segment.start;
+      var limit = segment.end;
 
-      while (index < segment[1]) {
-        var found = matchAt(index, segment[1]);
+      if (position > 0) {
+        var skip = index;
+        var words = 0;
+        var inWord = false;
+
+        while (skip < limit) {
+          if (matchAt(skip, limit)) {
+            break;
+          }
+          var original = skip < doc.indexMap.length ? DOC_ROSTER.charAt(doc.indexMap[skip]) : "";
+          var isWordChar = /[A-Za-z0-9]/.test(original);
+          if (isWordChar && !inWord) {
+            words += 1;
+          }
+          inWord = isWordChar;
+          if (words > PORTAL_TARGET_WORDS && !isWordChar) {
+            break;
+          }
+          skip += 1;
+        }
+
+        index = skip;
+      }
+
+      while (index < limit) {
+        var found = matchAt(index, limit);
 
         if (found) {
-          entries.push({ kind: "known", key: found.key, name: known[found.key].name });
+          entries.push({ kind: "known", name: known[found.key].name });
           index += found.len;
           continue;
         }
 
-        var end = index + 1;
-        while (end < segment[1] && !matchAt(end, segment[1])) {
-          end += 1;
+        var stop = index + 1;
+        while (stop < limit && !matchAt(stop, limit)) {
+          stop += 1;
         }
 
-        var text = DOC_ROSTER.slice(doc.indexMap[index], doc.indexMap[end - 1] + 1)
+        var text = DOC_ROSTER.slice(doc.indexMap[index], doc.indexMap[stop - 1] + 1)
           .replace(/^[\s,;:.\u2013\u2014|\-\/]+/, "")
           .replace(/[\s,;:.\u2013\u2014|\-\/]+$/, "")
           .trim();
 
-        if (foldName(text).length >= 2) {
-          entries.push({ kind: "missing", text: text, at: index });
-        }
+        splitRun(text).forEach(function (piece) {
+          if (foldName(piece).length >= 2) {
+            entries.push({ kind: "missing", text: piece });
+          }
+        });
 
-        index = end;
+        index = stop;
       }
     });
 
-    // fill in the neighbours of every gap: the last world before it and the first
-    // world after it, in the document's own order
+    // the same piece can show up more than once in the document, but it is one
+    // world to go and map, so it is only listed once
+    var seen = {};
     var missing = [];
+
     entries.forEach(function (entry, position) {
       if (entry.kind !== "missing") {
         return;
       }
+
+      var key = foldName(entry.text);
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+
       var before = null;
       var after = null;
 
@@ -421,7 +558,7 @@
         }
       }
 
-      missing.push({ text: entry.text, before: before, after: after, at: entry.at });
+      missing.push({ text: entry.text, before: before, after: after, at: position });
     });
 
     var docLower = DOC_ROSTER.toLowerCase();
@@ -437,7 +574,7 @@
 
     list.forEach(function (world) {
       if (world.key && world.key.length >= MIN_KEY) {
-        if (hit[world.key]) {
+        if (hits[world.key]) {
           matched += 1;
         } else {
           extras.push(world.name);
@@ -458,6 +595,60 @@
       worlds: list.length,
       portals: cuts.length,
       characters: doc.folded.length
+    };
+  }
+
+  // a pasted list is compared world by world: no guessing where a name ends, and
+  // the neighbours are the worlds written next to it in the document
+  function compareNames(names, list) {
+    var entries = names.map(function (name) {
+      return { name: name, key: foldName(name) };
+    });
+    var known = {};
+    var matched = 0;
+    var extras = [];
+
+    list.forEach(function (world) {
+      if (!world.key) {
+        return;
+      }
+      known[world.key] = world;
+    });
+
+    var used = {};
+    var missing = [];
+
+    entries.forEach(function (entry, position) {
+      if (!entry.key) {
+        return;
+      }
+      if (known[entry.key]) {
+        matched += 1;
+        used[entry.key] = true;
+        return;
+      }
+      missing.push({
+        text: entry.name,
+        before: position > 0 ? entries[position - 1].name : null,
+        after: position + 1 < entries.length ? entries[position + 1].name : null,
+        at: position
+      });
+    });
+
+    list.forEach(function (world) {
+      if (!world.key || !used[world.key]) {
+        extras.push(world.name);
+      }
+    });
+
+    return {
+      missing: missing,
+      extras: extras,
+      matched: matched,
+      worlds: list.length,
+      portals: 0,
+      exact: true,
+      documentWorlds: entries.length
     };
   }
 
@@ -487,12 +678,15 @@
     parts.push('<section class="summary">'
       + '<div class="big' + (missing.length ? "" : " ok") + '">'
       + (missing.length
-        ? missing.length + " run" + (missing.length === 1 ? "" : "s") + " of the map document " + (missing.length === 1 ? "is" : "are") + " not on your map"
+        ? missing.length + (result.exact
+          ? " world" + (missing.length === 1 ? " on" : "s on") + " the map document " + (missing.length === 1 ? "is" : "are") + " not on your map"
+          : " piece" + (missing.length === 1 ? "" : "s") + " of the map document " + (missing.length === 1 ? "is" : "are") + " not on your map")
         : "everything in the map document is on your map")
       + "</div>"
       + '<div class="sub"><strong>' + result.matched + " of your " + result.worlds + "</strong> worlds were found in the document"
       + (result.extras.length ? ", " + result.extras.length + " were not (listed below)" : "")
-      + ". " + result.portals + " portal entries were skipped.</div></section>");
+      + (result.exact ? "." : ". " + result.portals + " portal entries were skipped.")
+      + "</div></section>");
 
     if (missing.length) {
       parts.push('<h2 class="section">Not on your map yet <span class="count">(' + missing.length + ")</span></h2>");
@@ -517,12 +711,28 @@
     }
 
     parts.push('<div class="note">'
-      + "<p>The document writes its worlds as one long run of names, so a run above can hold more than one world: read it as the piece of the document between the world before it and the world after it.</p>"
-      + "<p>Names are compared with spacing, punctuation and capitals ignored, and the document's l/i mix-ups are tolerated, so a world is only missing when it really is not there.</p>"
-      + "<p>Portals are not worlds and are skipped. The <code>KEY</code> card is a legend, not a world.</p>"
+      + (result.exact
+        ? "<p>This list came from the worlds you pasted, so every row above is one world, written next to the worlds it sits between in the document.</p>"
+        : "<p>The document writes its worlds as one long run of names with no separators, so a piece above can hold more than one world when names of the same kind sit together: it is the piece of the document between the world before it and the world after it. Pieces that start with an ALL CAPS name, a number or an underscore are split off. Paste the document's world list above to get one row per world instead.</p>")
+      + "<p>Names are compared with spacing, punctuation and capitals ignored, and a name that only differs in its ending still counts as mapped, so a world is only missing when it really is not there.</p>"
+      + "<p>Portals are not worlds and are skipped, along with the name they point at. The <code>KEY</code> card is a legend, not a world.</p>"
       + "</div>");
 
     dom.out.innerHTML = parts.join("");
+  }
+
+  function setNameList(text) {
+    var names = String(text || "").split(/\r?\n/).map(function (line) {
+      return line.trim();
+    }).filter(function (line) {
+      return !!line;
+    });
+
+    pastedNames = names.length ? names : null;
+    if (worlds) {
+      setWorlds(worlds);
+    }
+    return pastedNames ? pastedNames.length : 0;
   }
 
   function missingText() {
@@ -547,10 +757,10 @@
       init();
     }
     worlds = list;
-    result = compare(worlds);
+    result = pastedNames ? compareNames(pastedNames, worlds) : compare(worlds);
     dom.empty.hidden = true;
     dom.stats.textContent = worlds.length + " worlds uploaded \u00b7 " + result.missing.length
-      + " run" + (result.missing.length === 1 ? "" : "s") + " not on your map";
+      + " " + (result.exact ? "world" : "piece") + (result.missing.length === 1 ? "" : "s") + " not on your map";
     dom.copy.disabled = !result.missing.length && !result.extras.length;
     dom.save.disabled = dom.copy.disabled;
     render();
@@ -631,12 +841,20 @@
     dom.stats = document.getElementById("stats");
     dom.empty = document.getElementById("empty");
     dom.out = document.getElementById("out");
+    dom.names = document.getElementById("names");
     dom.copy = document.getElementById("copy");
     dom.save = document.getElementById("save");
 
     dom.file.addEventListener("change", function () {
       readFile(dom.file.files && dom.file.files[0]);
       dom.file.value = "";
+    });
+    document.getElementById("uselist").addEventListener("click", function () {
+      setNameList(dom.names.value);
+    });
+    document.getElementById("clearlist").addEventListener("click", function () {
+      pastedNames = null;
+      setNameList("");
     });
     dom.copy.addEventListener("click", copyMissing);
     dom.save.addEventListener("click", saveMissing);
@@ -661,7 +879,10 @@
   window.MapChecker = {
     elementsFrom: elementsFrom,
     compare: compare,
+    compareNames: compareNames,
+    setNameList: setNameList,
     foldName: foldName,
+    splitRun: splitRun,
     roster: DOC_ROSTER,
     load: function (text) {
       var list = elementsFrom(text);
