@@ -5,192 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dream map viewer</title>
 <style>
-  :root {
-    color-scheme: dark;
-    --bg: #17130f;
-    --stage: #14100d;
-    --dot: #241d17;
-    --line: #2b241d;
-    --text: #ece2d4;
-    --muted: #a2958a;
-    --faint: #7f7264;
-    --accent: #d8a875;
-  }
+  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 13.5px/1.55 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   header {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 9px 14px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--line);
     flex-wrap: wrap;
-    row-gap: 6px;
+    align-items: center;
+    gap: 2px 9px;
+    padding: 7px 10px;
+    border-bottom: 1px solid #313244;
   }
-  header .mark { width: 19px; height: 19px; margin-right: 7px; flex: 0 0 auto; }
-  header h1 {
-    margin: 0 4px 0 0;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: .01em;
-    color: var(--text);
-  }
+  header .mark { width: 15px; height: 15px; flex: 0 0 auto; }
+  header h1 { margin: 0 4px 0 0; font-size: 12.5px; font-weight: 600; color: #cba6f7; }
   .btn {
     appearance: none;
     border: 0;
     background: none;
-    color: var(--muted);
+    color: #a6adc8;
     font: inherit;
-    font-size: 13px;
-    padding: 5px 9px;
-    border-radius: 8px;
+    padding: 2px 2px;
     cursor: pointer;
-    white-space: nowrap;
-    transition: color .12s ease, background .12s ease;
   }
-  .btn:hover { color: var(--text); background: rgba(236, 226, 212, .06); }
-  .btn:active { background: rgba(236, 226, 212, .1); }
-  .sep { width: 1px; height: 17px; background: var(--line); margin: 0 5px; flex: 0 0 auto; }
+  .btn:hover { color: #cdd6f4; }
+  .btn:focus-visible { outline: 1px solid #cba6f7; }
+  .sep { color: #45475a; }
   .search {
-    flex: 1 1 190px;
-    min-width: 130px;
-    max-width: 330px;
+    flex: 1 1 170px;
+    min-width: 120px;
+    max-width: 320px;
     background: none;
     border: 0;
-    border-bottom: 1px solid var(--line);
-    border-radius: 0;
-    color: var(--text);
+    border-bottom: 1px solid #313244;
+    color: #cdd6f4;
     font: inherit;
-    font-size: 13px;
-    padding: 5px 2px;
+    padding: 2px 0;
   }
-  .search::placeholder { color: var(--faint); }
-  .search:focus { outline: none; border-bottom-color: var(--accent); }
-  .stats { color: var(--faint); font-size: 12px; white-space: nowrap; padding: 0 4px; }
+  .search::placeholder { color: #6c7086; }
+  .search:focus { outline: none; border-bottom-color: #cba6f7; }
+  .stats { color: #6c7086; }
   .spacer { flex: 1; }
   main { flex: 1; display: flex; min-height: 0; }
-  #stage {
-    flex: 1;
-    position: relative;
-    overflow: hidden;
-    background-color: var(--stage);
-    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
-    background-size: 48px 48px;
-  }
+  #stage { flex: 1; position: relative; overflow: hidden; background: #181825; }
   #map { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
-  #map.panning { cursor: grabbing; }
-  #panel {
-    width: 296px;
-    flex: 0 0 296px;
-    border-left: 1px solid var(--line);
-    padding: 20px 18px;
-    overflow-y: auto;
-  }
-  #panel h2 { font-size: 15px; margin: 0 0 2px; word-break: break-word; font-weight: 600; }
-  #panel .sub { color: var(--faint); font-size: 11.5px; margin-bottom: 16px; word-break: break-word; }
-  #panel .block { margin: 16px 0; }
-  #panel .label {
-    color: var(--accent);
-    opacity: .8;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .12em;
-    margin-bottom: 5px;
-  }
-  #panel .note {
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 13px;
-    line-height: 1.65;
-    color: #ddd1c0;
-  }
-  #panel .muted { color: var(--faint); font-size: 12.5px; line-height: 1.7; margin: 2px 0; }
-  .chip {
-    display: inline-block;
-    font-size: 11px;
-    padding: 1px 8px;
-    margin: 0 6px 5px 0;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    color: #d7cabb;
-  }
+  #panel { width: 276px; flex: 0 0 276px; border-left: 1px solid #313244; padding: 12px; overflow-y: auto; }
+  #panel h2 { font-size: 13px; margin: 0 0 4px; font-weight: 600; }
+  #panel .sub, #panel .muted { color: #6c7086; }
+  #panel .block { margin: 12px 0; }
+  #panel .label { color: #cba6f7; font-size: 11px; letter-spacing: .06em; margin-bottom: 3px; }
+  #panel .note { white-space: pre-wrap; word-break: break-word; }
+  .chip { color: #a6adc8; margin-right: 10px; }
   .link {
     display: block;
     width: 100%;
     text-align: left;
     background: none;
     border: 0;
-    color: var(--muted);
+    color: #89b4fa;
     font: inherit;
-    font-size: 12.5px;
-    padding: 3px 0;
+    padding: 1px 0;
     cursor: pointer;
   }
-  .link:hover { color: var(--accent); }
+  .link:hover { text-decoration: underline; }
   #empty {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
+    gap: 3px;
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 26px;
+    padding: 20px;
     pointer-events: none;
-    gap: 7px;
+    color: #6c7086;
   }
-  #empty h2 { font-size: 16px; margin: 0; color: #e9dfd1; font-weight: 600; }
-  #empty p { margin: 0; color: var(--faint); font-size: 13px; line-height: 1.7; max-width: 470px; }
-  #empty code { color: #c9b49b; font-size: 12.5px; }
+  #empty h2 { font-size: 13px; margin: 0; color: #a6adc8; font-weight: 600; }
+  #empty p { margin: 0; max-width: 520px; }
+  #empty code { color: #a6adc8; }
   #empty[hidden] { display: none; }
   #legend {
     position: absolute;
-    left: 16px;
-    bottom: 13px;
+    left: 10px;
+    bottom: 8px;
     display: flex;
-    gap: 15px;
-    font-size: 11px;
-    color: var(--faint);
+    gap: 12px;
+    color: #6c7086;
     pointer-events: none;
   }
-  #legend span { display: inline-flex; align-items: center; gap: 6px; }
-  #legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-  #hint {
-    position: absolute;
-    right: 16px;
-    bottom: 13px;
-    font-size: 11px;
-    color: var(--faint);
-    pointer-events: none;
-  }
+  #legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #legend i { width: 7px; height: 7px; display: inline-block; }
+  #hint { position: absolute; right: 10px; bottom: 8px; color: #6c7086; pointer-events: none; }
   #dropping {
     position: fixed;
-    inset: 10px;
-    border: 1px dashed var(--accent);
-    border-radius: 10px;
+    inset: 0;
     display: none;
     align-items: center;
     justify-content: center;
-    font-size: 15px;
-    color: #f0dcc2;
-    z-index: 10;
-    pointer-events: none;
+    color: #cba6f7;
+    border: 1px dashed #cba6f7;
   }
   body.dragging #dropping { display: flex; }
-  @media (max-width: 820px) {
-    #panel { display: none; }
-    header { gap: 4px; padding: 8px 10px; }
-  }
+  @media (max-width: 780px) { #panel { display: none; } }
   #doc { display: none; }
   @media print {
     @page { size: A4 landscape; margin: 10mm; }
@@ -202,33 +127,33 @@
 <body>
 <header>
   <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-    <rect x="4" y="9" width="24" height="18" rx="8" fill="#d8a875"></rect>
-    <circle cx="9.5" cy="9.5" r="3.4" fill="#d8a875"></circle>
-    <circle cx="22.5" cy="9.5" r="3.4" fill="#d8a875"></circle>
-    <circle cx="11.5" cy="17" r="1.6" fill="#2a2018"></circle>
-    <circle cx="20.5" cy="17" r="1.6" fill="#2a2018"></circle>
-    <rect x="13.5" y="21.5" width="5" height="3.4" rx="1.7" fill="#2a2018"></rect>
+    <rect x="4" y="9" width="24" height="18" rx="8" fill="#cba6f7"></rect>
+    <circle cx="9.5" cy="9.5" r="3.4" fill="#cba6f7"></circle>
+    <circle cx="22.5" cy="9.5" r="3.4" fill="#cba6f7"></circle>
+    <circle cx="11.5" cy="17" r="1.6" fill="#1e1e2e"></circle>
+    <circle cx="20.5" cy="17" r="1.6" fill="#1e1e2e"></circle>
+    <rect x="13.5" y="21.5" width="5" height="3.4" rx="1.7" fill="#1e1e2e"></rect>
   </svg>
   <h1>dream map</h1>
   <label class="btn">open
     <input id="file" type="file" accept=".txt,.json,.jsonl,text/plain,application/json" hidden>
   </label>
-  <input id="search" class="search" type="search" placeholder="search a world, note or id">
+  <input id="search" class="search" type="search" placeholder="search">
   <span id="stats" class="stats"></span>
   <span class="spacer"></span>
   <button id="zoom-out" class="btn" type="button" title="zoom out">&minus;</button>
   <span id="zoom" class="stats">100%</span>
   <button id="zoom-in" class="btn" type="button" title="zoom in">+</button>
   <button id="fit" class="btn" type="button" title="fit the whole map in view">fit</button>
-  <span class="sep"></span>
+  <span class="sep">|</span>
   <button id="names" class="btn" type="button">names off</button>
   <button id="portals" class="btn" type="button">portals off</button>
-  <span class="sep"></span>
+  <span class="sep">|</span>
   <button id="svg" class="btn" type="button" title="download the map as svg">svg</button>
   <button id="png" class="btn" type="button" title="download the map as png">png</button>
   <button id="print" class="btn" type="button" title="print the map document or save it as pdf">pdf</button>
   <button id="docx" class="btn" type="button" title="save the map document as a .doc file">doc</button>
-  <span class="sep"></span>
+  <span class="sep">|</span>
   <button id="reset" class="btn" type="button" title="put every square back where the map has it">reset</button>
 </header>
 
@@ -237,11 +162,10 @@
     <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
     <div id="empty">
       <h2>drop a map export here</h2>
-      <p>run <code>map-exporter.lua</code> in your executor, then drag the newest file from <code>workspace/home map exports</code> into this window.</p>
-      <p>a <code>.json</code> file with the same element data works too.</p>
+      <p>workspace/home map exports &middot; .txt or .json</p>
     </div>
     <div id="legend"></div>
-    <div id="hint">drag to pan &middot; scroll to zoom &middot; drag a square to move it &middot; click one for its note</div>
+    <div id="hint">drag to pan &middot; scroll to zoom &middot; click a square for its note</div>
   </div>
   <aside id="panel"></aside>
 </main>
@@ -264,9 +188,9 @@
   var SVG_NS = "http://www.w3.org/2000/svg";
 
   var MARKERS = {
-    1: { name: "DeadEnd", color: "#4ade80" },
-    2: { name: "Badge", color: "#c084fc" },
-    3: { name: "AltExit", color: "#fb923c" }
+    1: { name: "DeadEnd", color: "#a6e3a1" },
+    2: { name: "Badge", color: "#cba6f7" },
+    3: { name: "AltExit", color: "#fab387" }
   };
 
   var state = {
@@ -606,7 +530,7 @@
 
   function arrowDefs() {
     return '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
-      + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#a69684"></path></marker></defs>';
+      + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#7f849c"></path></marker></defs>';
   }
 
   function edgePath(from, to) {
@@ -648,9 +572,6 @@
       "translate(" + state.view.x + " " + state.view.y + ") scale(" + state.view.k + ")"
     );
 
-    dom.stage.style.backgroundSize = (42 * state.view.k) + "px " + (42 * state.view.k) + "px";
-    dom.stage.style.backgroundPosition = state.view.x + "px " + state.view.y + "px";
-
     while (dom.world.firstChild) {
       dom.world.removeChild(dom.world.firstChild);
     }
@@ -675,7 +596,7 @@
           class: "edge",
           d: edgePath(worldPos(source), worldPos(target)),
           fill: "none",
-          stroke: "#a69684",
+          stroke: "#7f849c",
           "stroke-width": EDGE_WIDTH,
           "marker-end": "url(#arrow)"
         }, dom.world);
@@ -698,7 +619,7 @@
         width: NODE_W,
         height: NODE_H,
         rx: 12,
-        fill: "#f4f4f8",
+        fill: "#cdd6f4",
         stroke: element.color,
         "stroke-width": 4
       }, group);
@@ -711,7 +632,7 @@
           "text-anchor": "middle",
           "font-family": "Segoe UI, Roboto, sans-serif",
           "font-size": 22,
-          fill: "#3c3f52",
+          fill: "#1e1e2e",
           "font-weight": 700
         }, group);
         idNode.textContent = idText;
@@ -754,7 +675,7 @@
         height: NODE_H + 12,
         rx: 16,
         fill: "none",
-        stroke: "#ffffff",
+        stroke: "#cba6f7",
         "stroke-width": 2,
         "stroke-dasharray": "6 5"
       }, group);
@@ -882,7 +803,7 @@
       "font-size": font,
       "font-weight": 700,
       fill: color,
-      stroke: "#07070c",
+      stroke: "#181825",
       "stroke-width": 4,
       "stroke-linejoin": "round",
       "paint-order": "stroke"
@@ -998,11 +919,11 @@
           y1: item.element._screenY,
           x2: spot.x,
           y2: spot.baseline - spot.font * 0.34,
-          stroke: "#3a3d52",
+          stroke: "#313244",
           "stroke-width": 1
         }, dom.labelLayer);
       }
-      drawScreenLabel(item.text, spot.x, spot.baseline, item.strong ? "#ffe58a" : "#e7e9f4", spot.font);
+      drawScreenLabel(item.text, spot.x, spot.baseline, item.strong ? "#f9e2af" : "#cdd6f4", spot.font);
     });
   }
 
@@ -1405,7 +1326,7 @@
 
     if (!visibleElements().length) {
       return '<svg xmlns="' + SVG_NS + '" width="900" height="460" viewBox="0 0 900 460">'
-        + '<rect width="900" height="460" fill="#07070c"></rect>'
+        + '<rect width="900" height="460" fill="#181825"></rect>'
         + '<text x="450" y="230" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="18" fill="#8f93aa">no map data</text></svg>';
     }
 
@@ -1421,7 +1342,7 @@
     parts.push('<svg xmlns="' + SVG_NS + '" width="' + pixels.width + '" height="' + pixels.height
       + '" viewBox="' + round2(bounds.minX) + " " + round2(bounds.minY) + " " + round2(bounds.width) + " " + round2(bounds.height) + '">');
     parts.push('<rect x="' + round2(bounds.minX) + '" y="' + round2(bounds.minY) + '" width="' + round2(bounds.width)
-      + '" height="' + round2(bounds.height) + '" fill="#07070c"></rect>');
+      + '" height="' + round2(bounds.height) + '" fill="#181825"></rect>');
     parts.push(arrowDefs());
 
     var visible = visibleElements();
@@ -1437,7 +1358,7 @@
           return;
         }
         parts.push('<path d="' + edgePath(worldPos(source), worldPos(target))
-          + '" fill="none" stroke="#a69684" stroke-width="' + round2(stroke) + '" marker-end="url(#arrow)"></path>');
+          + '" fill="none" stroke="#7f849c" stroke-width="' + round2(stroke) + '" marker-end="url(#arrow)"></path>');
       });
     });
 
@@ -1469,11 +1390,11 @@
       var top = position.y - NODE_H / 2;
 
       parts.push('<rect x="' + round2(left) + '" y="' + round2(top) + '" width="' + NODE_W + '" height="' + NODE_H
-        + '" rx="12" fill="#f4f4f8" stroke="' + element.color + '" stroke-width="' + round2(4 * unit) + '"></rect>');
+        + '" rx="12" fill="#cdd6f4" stroke="' + element.color + '" stroke-width="' + round2(4 * unit) + '"></rect>');
 
       parts.push('<text x="' + round2(position.x) + '" y="' + round2(position.y + idFont * 0.34)
         + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(idFont)
-        + '" font-weight="700" fill="#3c3f52" textLength="' + round2(NODE_W - 18) + '" lengthAdjust="spacingAndGlyphs">'
+        + '" font-weight="700" fill="#1e1e2e" textLength="' + round2(NODE_W - 18) + '" lengthAdjust="spacingAndGlyphs">'
         + escapeXml(element.placeId) + '</text>');
 
       element.markers.forEach(function (markerId, index) {
@@ -1483,7 +1404,7 @@
         }
         parts.push('<rect x="' + round2(left + 8 + index * (markerSize + 4)) + '" y="'
           + round2(position.y + NODE_H / 2 - markerSize - 8) + '" width="' + round2(markerSize) + '" height="'
-          + round2(markerSize) + '" rx="3" fill="' + info.color + '" stroke="#07070c" stroke-width="'
+          + round2(markerSize) + '" rx="3" fill="' + info.color + '" stroke="#181825" stroke-width="'
           + round2(1.5 * unit) + '"></rect>');
       });
 
@@ -1522,7 +1443,7 @@
       exportLabelGrid.add(spot.box);
       labelParts.push('<text x="' + round2(spot.x) + '" y="' + round2(spot.baseline)
         + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(spot.font)
-        + '" font-weight="700" fill="#f1f2f6" stroke="#07070c" stroke-width="' + round2(spot.font * 0.3)
+        + '" font-weight="700" fill="#cdd6f4" stroke="#181825" stroke-width="' + round2(spot.font * 0.3)
         + '" stroke-linejoin="round" paint-order="stroke">' + escapeXml(label) + '</text>');
     });
 
@@ -1539,7 +1460,7 @@
     }
 
     parts.push('<text x="' + round2(bounds.minX + 20 * unit) + '" y="' + round2(bounds.minY + bounds.height - 22 * unit)
-      + '" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(17 * unit) + '" fill="#7c8095">'
+      + '" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(17 * unit) + '" fill="#6c7086">'
       + escapeXml(caption.join("  \u00b7  ")) + "</text>");
 
     parts.push("</svg>");
@@ -1864,7 +1785,7 @@
         return;
       }
 
-      context.fillStyle = "#07070c";
+      context.fillStyle = "#181825";
       context.fillRect(0, 0, width, height);
       context.drawImage(image, 0, 0, width, height);
 
@@ -1911,7 +1832,7 @@
     dom.world = svgNode("g", { id: "world" }, dom.svg);
     var defs = document.createElementNS(SVG_NS, "defs");
     defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
-      + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#a69684"></path></marker>';
+      + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#7f849c"></path></marker>';
     dom.svg.appendChild(defs);
 
     var style = document.createElementNS(SVG_NS, "style");
