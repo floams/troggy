@@ -473,7 +473,8 @@ print(string.format(
 ))
 
 if type(writefile) == "function" then
-	local exportPath = EXPORT_FOLDER .. "/" .. exportFileName()
+	local fileName = exportFileName()
+	local exportPath = EXPORT_FOLDER .. "/" .. fileName
 	ensureFolder(EXPORT_FOLDER)
 
 	local ok, err = pcall(writefile, exportPath, text)
@@ -483,7 +484,7 @@ if type(writefile) == "function" then
 			and string.format("%.1f KB", size / 1024)
 			or string.format("%d bytes", size)
 
-		print(string.format("saved map export to workspace. %s (%s)", exportPath, sizeText))
+		print(string.format("saved map export to workspace. %s (%s)", fileName, sizeText))
 	else
 		warn("[map-exporter] could not write " .. exportPath .. ": " .. tostring(err))
 		print(text)
