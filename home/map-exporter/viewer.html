@@ -194,6 +194,7 @@
   <button id="png" class="btn" type="button">Download PNG</button>
   <button id="print" class="btn" type="button">Save as PDF</button>
   <button id="docx" class="btn" type="button">Save as DOC</button>
+  <button id="names" class="btn" type="button">Names: off</button>
   <button id="portals" class="btn" type="button">Portals: off</button>
 </header>
 
@@ -222,9 +223,10 @@
   var MAP_W = 944;
   var MAP_H = 506;
   var COORD_SCALE = 2.2;
-  var NODE_W = 96;
-  var NODE_H = 96;
+  var NODE_W = 128;
+  var NODE_H = 128;
   var LABEL_FONT = 13;
+  var EDGE_WIDTH = 6;
   var SVG_NS = "http://www.w3.org/2000/svg";
 
   var MARKERS = {
@@ -240,6 +242,7 @@
     query: "",
     view: { x: 0, y: 0, k: 1 },
     hidePortals: true,
+    showNames: false,
     meta: { placeId: "", placeName: "", exportedAt: "" }
   };
 
@@ -568,7 +571,7 @@
   }
 
   function arrowDefs() {
-    return '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+    return '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
       + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#8b8fa3"></path></marker></defs>';
   }
 
@@ -639,7 +642,7 @@
           d: edgePath(worldPos(source), worldPos(target)),
           fill: "none",
           stroke: "#8b8fa3",
-          "stroke-width": 2,
+          "stroke-width": EDGE_WIDTH,
           "marker-end": "url(#arrow)"
         }, dom.world);
       });
@@ -673,7 +676,7 @@
           y: -4,
           "text-anchor": "middle",
           "font-family": "Segoe UI, Roboto, sans-serif",
-          "font-size": 17,
+          "font-size": 22,
           fill: "#3c3f52",
           "font-weight": 700
         }, group);
@@ -690,10 +693,10 @@
           return;
         }
         svgNode("rect", {
-          x: -NODE_W / 2 + 6 + index * 17,
-          y: NODE_H / 2 - 19,
-          width: 12,
-          height: 12,
+          x: -NODE_W / 2 + 8 + index * 22,
+          y: NODE_H / 2 - 26,
+          width: 16,
+          height: 16,
           rx: 3,
           fill: info.color,
           stroke: "#0b0b12",
@@ -860,6 +863,10 @@
 
     while (dom.labelLayer.firstChild) {
       dom.labelLayer.removeChild(dom.labelLayer.firstChild);
+    }
+
+    if (!state.showNames) {
+      return;
     }
 
     var width = dom.stage.clientWidth || 1200;
@@ -1371,8 +1378,8 @@
     var bounds = fitBounds();
     var pixels = exportPixelSize(bounds);
     var unit = bounds.width / pixels.width;
-    var stroke = 2.4 * unit;
-    var idFont = 17 * unit;
+    var stroke = EDGE_WIDTH * unit;
+    var idFont = 22 * unit;
     var labelFont = 14 * unit;
     var markerSize = 13 * unit;
     var parts = [];
@@ -1428,7 +1435,7 @@
       var top = position.y - NODE_H / 2;
 
       parts.push('<rect x="' + round2(left) + '" y="' + round2(top) + '" width="' + NODE_W + '" height="' + NODE_H
-        + '" rx="12" fill="#f4f4f8" stroke="' + element.color + '" stroke-width="' + round2(stroke * 1.8) + '"></rect>');
+        + '" rx="12" fill="#f4f4f8" stroke="' + element.color + '" stroke-width="' + round2(4 * unit) + '"></rect>');
 
       parts.push('<text x="' + round2(position.x) + '" y="' + round2(position.y + idFont * 0.34)
         + '" text-anchor="middle" font-family="Segoe UI, Roboto, sans-serif" font-size="' + round2(idFont)
@@ -1443,8 +1450,12 @@
         parts.push('<rect x="' + round2(left + 8 + index * (markerSize + 4)) + '" y="'
           + round2(position.y + NODE_H / 2 - markerSize - 8) + '" width="' + round2(markerSize) + '" height="'
           + round2(markerSize) + '" rx="3" fill="' + info.color + '" stroke="#07070c" stroke-width="'
-          + round2(stroke * 0.6) + '"></rect>');
+          + round2(1.5 * unit) + '"></rect>');
       });
+
+      if (!state.showNames) {
+        return;
+      }
 
       var label = truncateLabel(element.name || String(element.placeId), 34);
       var duplicate = labelAnchors.some(function (other) {
@@ -1649,9 +1660,12 @@
   // the document never shows portal nodes, whatever the toggle is set to
   function documentMapSvg() {
     var hiding = state.hidePortals;
+    var names = state.showNames;
     state.hidePortals = true;
+    state.showNames = true;
     var svg = buildStandaloneSvg();
     state.hidePortals = hiding;
+    state.showNames = names;
     return svg;
   }
 
@@ -1862,7 +1876,7 @@
 
     dom.world = svgNode("g", { id: "world" }, dom.svg);
     var defs = document.createElementNS(SVG_NS, "defs");
-    defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+    defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
       + '<path d="M 0 0 L 10 5 L 0 10 z" fill="#8b8fa3"></path></marker>';
     dom.svg.appendChild(defs);
 
@@ -1919,6 +1933,12 @@
     document.head.appendChild(docStyle);
     document.getElementById("print").addEventListener("click", printDocument);
     document.getElementById("docx").addEventListener("click", downloadDocument);
+    document.getElementById("names").addEventListener("click", function () {
+      state.showNames = !state.showNames;
+      this.textContent = state.showNames ? "Names: on" : "Names: off";
+      render();
+    });
+
     document.getElementById("portals").addEventListener("click", function () {
       state.hidePortals = !state.hidePortals;
       this.textContent = state.hidePortals ? "Portals: off" : "Portals: on";
