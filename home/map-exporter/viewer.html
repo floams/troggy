@@ -1625,6 +1625,10 @@
     + '#doc .doc-meta{color:#555;font-size:11px;margin:0 0 10px}'
     + '#doc .doc-map{margin:0 0 10px}'
     + '#doc .doc-map svg{width:100%;height:auto;display:block}'
+    + '#doc .doc-board{position:relative;width:100%;margin:0 0 6px;border-top:1px solid #d8d8d8;border-bottom:1px solid #d8d8d8}'
+    + '#doc .doc-board span{position:absolute;transform:translate(-50%,-50%);font-size:4.6pt;line-height:1;white-space:nowrap;color:#111}'
+    + '#doc .doc-board span.doc-board-missing{color:#c00000;font-weight:700}'
+    + '#doc .doc-board-caption{font-size:8.5px;color:#555;margin:0 0 12px}'
     + '#doc .doc-worlds{columns:5;column-gap:10px;font-size:9.5px;line-height:1.5}'
     + '#doc .doc-world{display:block;break-inside:avoid;border-left:2px solid #888;padding:0 0 0 4px;margin:0 0 1px}'
     + '#doc .doc-world-missing{color:#c00000;border-left-color:#c00000;background:#ffecec;font-weight:700}'
@@ -1649,6 +1653,42 @@
     var svg = buildStandaloneSvg();
     state.hidePortals = hiding;
     return svg;
+  }
+
+  // the map document is a flat map of names: each world sits exactly where it
+  // sits on the map, so the document reads like the poster it describes
+  function documentBoard(worlds) {
+    if (!worlds.length) {
+      return "";
+    }
+
+    var points = worlds.map(function (element) {
+      var position = worldPos(element);
+      return { element: element, x: position.x, y: position.y };
+    });
+    var xs = points.map(function (point) { return point.x; }).sort(function (a, b) { return a - b; });
+    var ys = points.map(function (point) { return point.y; }).sort(function (a, b) { return a - b; });
+    // same bounds the poster image uses, so the names line up with the map above
+    var minX = percentile(xs, 0.02);
+    var maxX = percentile(xs, 0.98);
+    var minY = percentile(ys, 0.02);
+    var maxY = percentile(ys, 0.98);
+    var width = Math.max(1, maxX - minX);
+    var height = Math.max(1, maxY - minY);
+
+    var names = points.map(function (point) {
+      var name = String(point.element.name || "").trim();
+      var missing = !inMapDocument(point.element);
+      return '<span' + (missing ? ' class="doc-board-missing"' : "")
+        + ' style="left:' + (((point.x - minX) / width) * 100).toFixed(2)
+        + "%;top:" + (((point.y - minY) / height) * 100).toFixed(2) + '%">'
+        + escapeXml(name || "(unnamed)") + "</span>";
+    }).join("");
+
+    return "<h2>Map of names</h2>"
+      + '<div class="doc-board" style="padding-bottom:' + ((height / width) * 100).toFixed(2) + '%">' + names + "</div>"
+      + '<p class="doc-board-caption">Every world is written where it sits on the map, so this reads like the map document itself. '
+      + "The readable list underneath has the same worlds in the same order.</p>";
   }
 
   function buildDocument() {
@@ -1690,6 +1730,7 @@
     return "<h1>Map document</h1>"
       + '<p class="doc-meta">' + escapeXml(meta.join("  \u00b7  ")) + "</p>"
       + '<div class="doc-map">' + documentMapSvg() + "</div>"
+      + documentBoard(worlds)
       + "<h2>Worlds (" + worlds.length + ")</h2>"
       + '<div class="doc-worlds">' + chips + "</div>"
       + missingBlock
@@ -1949,6 +1990,7 @@
     documentWorlds: documentWorlds,
     inMapDocument: inMapDocument,
     documentFile: documentFile,
+    documentBoard: documentBoard,
     constants: { MAP_W: MAP_W, MAP_H: MAP_H, COORD_SCALE: COORD_SCALE, NODE: NODE_H },
     fit: fit,
     render: render,
