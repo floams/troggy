@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>map checker</title>
+<style>
+  :root {
+    --bg: #07070c;
+    --panel: #0d0d15;
+    --line: #23233a;
+    --text: #e7e9f4;
+    --muted: #8f93aa;
+    --red: #ff6b6b;
+    --red-dim: #3a1414;
+    --green: #57d99b;
+    --yellow: #ffe58a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  header h1 { font-size: 14px; margin: 0; letter-spacing: .08em; text-transform: uppercase; color: #c9cce0; }
+  .spacer { flex: 1; }
+  .btn {
+    background: #17172a;
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 7px;
+    padding: 6px 11px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .btn:hover:not(:disabled) { border-color: #3b3b5c; background: #1d1d33; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .stats { color: var(--muted); font-size: 12.5px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 18px 16px 60px; }
+  .empty {
+    border: 1px dashed var(--line);
+    border-radius: 12px;
+    padding: 34px 22px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .empty h2 { margin: 0 0 8px; font-size: 17px; color: #d9dbeb; }
+  .empty p { margin: 5px auto; max-width: 640px; line-height: 1.55; }
+  .empty code { background: #161624; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; color: #cfd3ea; }
+  .empty[hidden] { display: none; }
+  .summary {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 0 0 16px;
+    background: var(--panel);
+  }
+  .summary .big { font-size: 17px; font-weight: 700; }
+  .summary .big.ok { color: var(--green); }
+  .summary .sub { color: var(--muted); font-size: 12.5px; margin-top: 4px; line-height: 1.5; }
+  h2.section { font-size: 12px; text-transform: uppercase; letter-spacing: .09em; color: #b9bdd4; margin: 22px 0 8px; }
+  h2.section .count { color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  ul.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+  li.item {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: 9px;
+    padding: 9px 12px;
+    background: #0b0b13;
+    line-height: 1.45;
+  }
+  li.missing { border-left-color: var(--red); background: #140d10; }
+  li.missing .chunk { color: var(--red); font-weight: 700; word-break: break-word; }
+  li.item .where { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  li.item .where b { color: #cfd3ea; font-weight: 600; }
+  li.extra { border-left-color: var(--yellow); }
+  li.extra .chunk { color: var(--yellow); font-weight: 600; word-break: break-word; }
+  .note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+    margin: 22px 0 0;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .note p { margin: 4px 0; }
+  #dropping {
+    position: fixed;
+    inset: 0;
+    border: 2px dashed #5b6ee1;
+    background: rgba(30, 40, 90, .35);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #dfe3ff;
+    z-index: 10;
+    pointer-events: none;
+  }
+  body.dragging #dropping { display: flex; }
+  @media print {
+    @page { margin: 12mm; }
+    header, #dropping { display: none !important; }
+    body { background: #fff; color: #111; }
+    li.item { background: #fff; break-inside: avoid; }
+    li.missing .chunk { color: #b00000; }
+    .summary, .note { background: #fff; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>map checker</h1>
+  <label class="btn">Open export
+    <input id="file" type="file" accept=".txt,.json,.jsonl,text/plain,application/json" hidden>
+  </label>
+  <span id="stats" class="stats">no export loaded</span>
+  <span class="spacer"></span>
+  <button id="copy" class="btn" type="button" disabled>Copy missing list</button>
+  <button id="save" class="btn" type="button" disabled>Download .txt</button>
+</header>
+
+<main>
+  <div id="empty" class="empty">
+    <h2>drop map-export.txt here</h2>
+    <p>run <code>map-exporter.lua</code> in your executor, then drop <code>workspace/map-export.txt</code> on this page, or open it with the button above.</p>
+    <p>a <code>.json</code> file with the same element data works too.</p>
+    <p>the checker walks the world list of the map document in order, crosses out every world you have mapped, and shows you what is left &mdash; with the worlds that come before and after it, so you can find it in the game.</p>
+  </div>
+  <div id="out"></div>
+</main>
+<div id="dropping">drop map-export.txt or .json</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // the world list of the map document ("Steel's home Map.pdf"), flattened the way
+  // it appears there. Portals are split off, so every run left between two world
+  // names you do not have is a piece of the document that is not on your map yet.
+  var DOC_ROSTER = [
+    "> home > nexus 777hou small inconvenienceLakeside Town Somewhere far over the horizon granite",
+    "cove Can we get a cup of coffee? fish bowl North Pole hidden shore Rat hole Exterior PORTAL TO",
+    "SWEETCORN SNOWDRIFT extension AN ERROR HAS OCCURED campfire Rehsif Town rocking world big",
+    "mountainBANLAND tophet Dismembrance Third Stage of Grief Dead Space bunker Rotund Inc.",
+    "Headquarters gone in the morning WORLDS COLLIDE testing_region eenzaame toren Canvas Greyshift",
+    "Kontrived Perfunctory Anima facadus gladi the soda space One Door. Simple, Easy, and Fun!",
+    "facadus gladi EX quarr-i COLATOSE oil rig the finite road where Knight Night nvm! PORTAL TO THE",
+    "SODA SPACE PORTAL TO THE SODA SPACE perilous pipeway Bustling Town volcanic pit Innerspace",
+    "banana forest Please Wait thus far and thus advancement’s end PORTAL TO THE GOAL IS SIMPLE",
+    "foreign force xXSlayerXx’s Challenge welcometotheshow! Office Complex spriral sanctuary",
+    "unwanted_Town Hydrocortisone transitional space C Sensory Shifted Alleyway sunyata Road Blocks",
+    "Headquarters party space the great inferno 77hou Crypt Sunset Castle Home… REBORN! The Room ; An",
+    "Interview Grove Questionable Within The Tomb Surface World a world on fire Polar Plateau A",
+    "Reflection out of bounds Subway HOME TYCOON!!! fish city fish factory remains fish bank under",
+    "the sea C-Floor climb fish for fish fish jail aLTa:aQUa trusS worlD Pisces! PORTAL TO A WORLD ON",
+    "FIRE PORTAL TO A WORLD ON FIRE PORTAL TO A WORLD ON FIRE PORTAL TO A WORLD ON FIRE PORTAL TO A",
+    "WORLD ON FIRE Viruz. Super Easy Impossible Obby [27 Stages!!!] Cyan Constructs HIRAETH Lights?",
+    "shrine Atlas Laboratory Major Respite Atlas Laboratory Minor Corn flake rescue mission! cylinder",
+    "world spawnpoints Mt eRror downpour spawn limbo DisPlaced for the tired Wrong turn First Stage",
+    "of Grief orchid garden Mystical Ocean vile swamp WEEGEE HORROR evergold Beehive World spawn",
+    "factory INTO THE MAINFRAME random decal gallery Wilted Tower Sunstone Park purgatory PORTAL TO A",
+    "WORLD ON FIRE box o bark gum world THE WALTERVERSE formica butterball PORTAL TO > HOME PORTAL TO",
+    "> HOME balls world FOR THE: yin and yang what lies beyond what lies beneath the goal is simple",
+    "PORTAL TO THE GOAL IS SIMPLE Elysium PILLAR WORLD Balance +- Asphodel ANGELS SECRET HIDEOUT GET",
+    "OUT JUST A BAD DREAM TartarusPORTAL TO A WORLD ON FIRE crystalline canyon :( FOURTH WALL abyss",
+    "re: FOURTH WALL Black and White whitespace blackspace Oasis the dungeon forgotten seabed inpeace",
+    "ethereal cliffs thalassophobia Midnight Tide Desert O’ Nightmares Jagged + Constructs Marigold",
+    "Tapestry Stale Greenhouse Shoot For The Stars chilled warehouse sun-bathed crossing PORTAL TO A",
+    "WORLD ON FIRE blizzard’d Shattered Glacier Permafrost aspen Climb of Truism In E-Flat Minor",
+    "aokabe Indepth, Undone PROTEST Serenity Jungle PORTAL TO A WORLD ON FIRE candle world",
+    "transitional space B Sector Drift inviral’s racing course Volcano City lab The Zone TRAP capture",
+    "the joeCITY STREET cart ride homeLIMINALITYneon city!!! THE office shattered skyscape world as a",
+    "whole the void anthropocentrism. big hot UH OH!!! privacy is a myth palisades coconut isles I",
+    "Didn’t Catch Your Name hellhou Hiker’s Hell Stonebound, Flowerhenge Stonesurge, Calm before the",
+    "Storm Inviral’s Place: 04072024_9 indiscernible prosperity Phthalo Green Basillica hyperion YOU",
+    "WILL NEED THIS the gaming party 9 V?V? static incorporated falter tempo heart afterparty GUILTY",
+    "7hou for the lost flippant home of the blue ??? flora, et fauna PORTAL TO HIRAETH overgrowth",
+    "Lost Forest Sovereign Site: The Tomb of Kings Starry Night flidora Land of the Water Snakes",
+    "drown fishes gallery a worId on fire beyond the moon Doodoo World Modelling Clay Grounds the",
+    "horror in the woods PORTAL TO A WORLD ON FIRE PORTAL TO A WORLD ON FIRE PORTAL TO QUARR-I PORTAL",
+    "TO QUARR-I PORTAL TO A WORI D ON FIRE PORTAL TO A WORI D ON FIRE mt. rumble electric temple rise",
+    "to the occasion Loud Quiet World Crossroads Sand World SiroccoStone World Piano Room the world",
+    "hereafter far exodus prophetic dream Void Worldwhomever PORTAL TO BUSTLING TOWN PORTAL TO",
+    "BUSTLING TOWN dracula’s COOL castle goobie graveyard Contradiction paradoxa frigidus venusian",
+    "discotheque plastic matrix sweetcorn snowdrift Dam The overt edge of oblivionPolar Pathways",
+    "Hiker’s Limbo PORTAL TO TEMPO HEART PORTAL TO TEMPO HEART transitional space A GUESS THE",
+    "CHARACTER (192) 11:59 PM themland Worlds Hardest Obby a place where you could relax cerebellum",
+    "plexiglass GAMER LAND Nandos World Cheat_Code press the button!!! A Moment, Fractured. A Moment,",
+    "Whole. nostalgia land Sword Fight On The Heights! impasse EYELOVEU luminosity YHARON LAND!!!!!",
+    "the path least taken inactive volcanic mines PORTAL TO SWEETCORN SNOWDRIFT > pvp world> GEAR",
+    "TESTER WORLD > dev hub world! ant foreign force EX > bonus world!!! The Red Room ; Interview",
+    "Inverted Forest the goal is simple EX > Epilogue > home rpg the dark side of the moondirt road :",
+    "iron valley PORTAL TO PERILOUS PIPEWAY PORTAL TO PERILOUS PIPEWAY PORTAL TO > HOME PORTAL TO >",
+    "HOME"
+  ].join(' ');
+
+  var dom = {};
+  var worlds = null;
+  var result = null;
+
+  function foldName(text) {
+    return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "").replace(/i/g, "l");
+  }
+
+  function isPortal(name) {
+    return /^\s*portals?\b/i.test(String(name || ""));
+  }
+
+  function isKeyCard(name, note) {
+    return /^key$/i.test(String(name || "").trim()) && !!note;
+  }
+
+  // reads an export: either the raw data lines the lua file writes, or plain json
+  function elementsFrom(text) {
+    var raw = String(text || "").replace(/^\uFEFF/, "").trim();
+    var list = null;
+
+    if (!raw) {
+      return null;
+    }
+
+    if (raw.charAt(0) === "{" || raw.charAt(0) === "[") {
+      try {
+        var data = JSON.parse(raw);
+        if (Array.isArray(data)) {
+          list = data;
+        } else if (data && Array.isArray(data.elements)) {
+          list = data.elements;
+        } else if (data && Array.isArray(data.map)) {
+          list = data.map;
+        }
+      } catch (error) {
+        list = null;
+      }
+    }
+
+    if (!list) {
+      list = [];
+      raw.split(/\r?\n/).forEach(function (line) {
+        var match = line.match(/^\s*\[\d+\]\s*(\{.*\})\s*$/);
+        if (!match) {
+          return;
+        }
+        try {
+          list.push(JSON.parse(match[1]));
+        } catch (error) {
+          /* a broken line does not stop the rest */
+        }
+      });
+    }
+
+    if (!list || !list.length) {
+      return null;
+    }
+
+    var seen = {};
+    var found = [];
+
+    list.forEach(function (entry) {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+      var name = typeof entry.Name === "string" ? entry.Name
+        : (typeof entry.name === "string" ? entry.name : "");
+      var note = typeof entry.Note === "string" ? entry.Note
+        : (typeof entry.note === "string" ? entry.note : "");
+      var placeId = entry.PlaceId === undefined || entry.PlaceId === null ? entry.placeId : entry.PlaceId;
+
+      name = name.trim();
+      if (!name || isPortal(name) || isKeyCard(name, note)) {
+        return;
+      }
+
+      // the map keeps one copy of a world per entrance, so copies fold together
+      var id = String(placeId === undefined || placeId === null ? "" : placeId);
+      var key = id === "CUSTOM" || id === "" ? "custom:" + name.toLowerCase() : "id:" + id;
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      found.push({ name: name, placeId: id, key: foldName(name) });
+    });
+
+    return found.length ? found : null;
+  }
+
+  // the document with punctuation and spaces stripped, plus where each folded
+  // character came from, so a run can be cut back out of the original text
+  function foldDocument() {
+    var folded = "";
+    var indexMap = [];
+
+    for (var i = 0; i < DOC_ROSTER.length; i += 1) {
+      var ch = DOC_ROSTER.charAt(i).toLowerCase();
+      if ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9")) {
+        folded += ch === "i" ? "l" : ch;
+        indexMap.push(i);
+      }
+    }
+
+    return { folded: folded, indexMap: indexMap };
+  }
+
+  var MIN_KEY = 3;
+  var PORTAL_KEY = "portalto";
+
+  function compare(list) {
+    var doc = foldDocument();
+    var known = {};
+    var longest = MIN_KEY;
+
+    list.forEach(function (world) {
+      if (!world.key || world.key.length < MIN_KEY) {
+        return;
+      }
+      known[world.key] = world;
+    });
+
+    Object.keys(known).forEach(function (key) {
+      longest = Math.max(longest, key.length);
+    });
+
+    var hit = {};
+
+    function matchAt(index, limit) {
+      var size = Math.min(longest, limit - index);
+      for (var len = size; len >= MIN_KEY; len -= 1) {
+        var key = doc.folded.substr(index, len);
+        if (known[key]) {
+          hit[key] = true;
+          return { key: key, len: len };
+        }
+      }
+      return null;
+    }
+
+    // "PORTAL TO X" entries are plumbing in the document, not worlds: they are cut
+    // out before matching so they never show up as something to go and map
+    var cuts = [];
+    var at = doc.folded.indexOf(PORTAL_KEY);
+    while (at !== -1) {
+      cuts.push(at);
+      at = doc.folded.indexOf(PORTAL_KEY, at + PORTAL_KEY.length);
+    }
+
+    var segments = [];
+    var start = 0;
+    cuts.forEach(function (cut) {
+      segments.push([start, cut]);
+      start = cut + PORTAL_KEY.length;
+    });
+    segments.push([start, doc.folded.length]);
+
+    var entries = [];
+
+    segments.forEach(function (segment) {
+      var index = segment[0];
+
+      while (index < segment[1]) {
+        var found = matchAt(index, segment[1]);
+
+        if (found) {
+          entries.push({ kind: "known", key: found.key, name: known[found.key].name });
+          index += found.len;
+          continue;
+        }
+
+        var end = index + 1;
+        while (end < segment[1] && !matchAt(end, segment[1])) {
+          end += 1;
+        }
+
+        var text = DOC_ROSTER.slice(doc.indexMap[index], doc.indexMap[end - 1] + 1)
+          .replace(/^[\s,;:.\u2013\u2014|\-\/]+/, "")
+          .replace(/[\s,;:.\u2013\u2014|\-\/]+$/, "")
+          .trim();
+
+        if (foldName(text).length >= 2) {
+          entries.push({ kind: "missing", text: text, at: index });
+        }
+
+        index = end;
+      }
+    });
+
+    // fill in the neighbours of every gap: the last world before it and the first
+    // world after it, in the document's own order
+    var missing = [];
+    entries.forEach(function (entry, position) {
+      if (entry.kind !== "missing") {
+        return;
+      }
+      var before = null;
+      var after = null;
+
+      for (var i = position - 1; i >= 0; i -= 1) {
+        if (entries[i].kind === "known") {
+          before = entries[i].name;
+          break;
+        }
+      }
+      for (var j = position + 1; j < entries.length; j += 1) {
+        if (entries[j].kind === "known") {
+          after = entries[j].name;
+          break;
+        }
+      }
+
+      missing.push({ text: entry.text, before: before, after: after, at: entry.at });
+    });
+
+    var docLower = DOC_ROSTER.toLowerCase();
+
+    // names too short or too symbol-heavy to fold are looked up as written
+    function shortHit(world) {
+      return (!world.key || world.key.length < MIN_KEY)
+        && docLower.indexOf(String(world.name || "").toLowerCase()) !== -1;
+    }
+
+    var extras = [];
+    var matched = 0;
+
+    list.forEach(function (world) {
+      if (world.key && world.key.length >= MIN_KEY) {
+        if (hit[world.key]) {
+          matched += 1;
+        } else {
+          extras.push(world.name);
+        }
+        return;
+      }
+      if (shortHit(world)) {
+        matched += 1;
+      } else {
+        extras.push(world.name);
+      }
+    });
+
+    return {
+      missing: missing,
+      extras: extras,
+      matched: matched,
+      worlds: list.length,
+      portals: cuts.length,
+      characters: doc.folded.length
+    };
+  }
+
+  function shorten(text, limit) {
+    if (text.length <= limit) {
+      return text;
+    }
+    return text.slice(0, limit).trim() + "\u2026";
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function render() {
+    if (!result) {
+      return;
+    }
+
+    var parts = [];
+    var missing = result.missing;
+
+    parts.push('<section class="summary">'
+      + '<div class="big' + (missing.length ? "" : " ok") + '">'
+      + (missing.length
+        ? missing.length + " run" + (missing.length === 1 ? "" : "s") + " of the map document " + (missing.length === 1 ? "is" : "are") + " not on your map"
+        : "everything in the map document is on your map")
+      + "</div>"
+      + '<div class="sub"><strong>' + result.matched + " of your " + result.worlds + "</strong> worlds were found in the document"
+      + (result.extras.length ? ", " + result.extras.length + " were not (listed below)" : "")
+      + ". " + result.portals + " portal entries were skipped.</div></section>");
+
+    if (missing.length) {
+      parts.push('<h2 class="section">Not on your map yet <span class="count">(' + missing.length + ")</span></h2>");
+      parts.push('<ul class="list">');
+      missing.forEach(function (item) {
+        parts.push('<li class="item missing">'
+          + '<div class="chunk">' + escapeHtml(shorten(item.text, 240)) + "</div>"
+          + '<div class="where">after <b>' + escapeHtml(item.before || "the start of the map document") + "</b>"
+          + " &middot; before <b>" + escapeHtml(item.after || "the end of the map document") + "</b></div>"
+          + "</li>");
+      });
+      parts.push("</ul>");
+    }
+
+    if (result.extras.length) {
+      parts.push('<h2 class="section">On your map, not in the document <span class="count">(' + result.extras.length + ")</span></h2>");
+      parts.push('<ul class="list">');
+      result.extras.slice().sort(function (a, b) { return a.localeCompare(b); }).forEach(function (name) {
+        parts.push('<li class="item extra"><div class="chunk">' + escapeHtml(name) + "</div></li>");
+      });
+      parts.push("</ul>");
+    }
+
+    parts.push('<div class="note">'
+      + "<p>The document writes its worlds as one long run of names, so a run above can hold more than one world: read it as the piece of the document between the world before it and the world after it.</p>"
+      + "<p>Names are compared with spacing, punctuation and capitals ignored, and the document's l/i mix-ups are tolerated, so a world is only missing when it really is not there.</p>"
+      + "<p>Portals are not worlds and are skipped. The <code>KEY</code> card is a legend, not a world.</p>"
+      + "</div>");
+
+    dom.out.innerHTML = parts.join("");
+  }
+
+  function missingText() {
+    if (!result || !result.missing.length) {
+      return "";
+    }
+    var lines = ["map checker - worlds not on the map yet", ""];
+    result.missing.forEach(function (item, index) {
+      lines.push((index + 1) + ". " + item.text);
+      lines.push("   after: " + (item.before || "the start of the map document"));
+      lines.push("   before: " + (item.after || "the end of the map document"));
+    });
+    if (result.extras.length) {
+      lines.push("", "on your map, not in the document:");
+      result.extras.slice().sort().forEach(function (name) { lines.push("- " + name); });
+    }
+    return lines.join("\n");
+  }
+
+  function setWorlds(list) {
+    if (!dom.out) {
+      init();
+    }
+    worlds = list;
+    result = compare(worlds);
+    dom.empty.hidden = true;
+    dom.stats.textContent = worlds.length + " worlds uploaded \u00b7 " + result.missing.length
+      + " run" + (result.missing.length === 1 ? "" : "s") + " not on your map";
+    dom.copy.disabled = !result.missing.length && !result.extras.length;
+    dom.save.disabled = dom.copy.disabled;
+    render();
+  }
+
+  function readFile(file) {
+    if (!file) {
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var list = elementsFrom(String(reader.result || ""));
+      if (!list) {
+        alert("That file does not look like a map export. Use workspace/map-export.txt from map-exporter.lua, or a json file with the element data.");
+        return;
+      }
+      setWorlds(list);
+    };
+    reader.readAsText(file);
+  }
+
+  function copyMissing() {
+    var text = missingText();
+    if (!text) {
+      return;
+    }
+
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+
+    var done = false;
+    try {
+      done = document.execCommand("copy");
+    } catch (error) {
+      done = false;
+    }
+    area.remove();
+
+    if (!done && navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(function () { /* the file button still works */ });
+      done = true;
+    }
+
+    dom.copy.textContent = done ? "Copied" : "Copy failed";
+    setTimeout(function () { dom.copy.textContent = "Copy missing list"; }, 1400);
+  }
+
+  function saveMissing() {
+    var text = missingText();
+    if (!text) {
+      return;
+    }
+    var blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "missing-worlds.txt";
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+      link.remove();
+    }, 1200);
+  }
+
+  var started = false;
+
+  function init() {
+    if (started) {
+      return;
+    }
+    started = true;
+    dom.file = document.getElementById("file");
+    dom.stats = document.getElementById("stats");
+    dom.empty = document.getElementById("empty");
+    dom.out = document.getElementById("out");
+    dom.copy = document.getElementById("copy");
+    dom.save = document.getElementById("save");
+
+    dom.file.addEventListener("change", function () {
+      readFile(dom.file.files && dom.file.files[0]);
+      dom.file.value = "";
+    });
+    dom.copy.addEventListener("click", copyMissing);
+    dom.save.addEventListener("click", saveMissing);
+
+    window.addEventListener("dragover", function (event) {
+      event.preventDefault();
+      document.body.classList.add("dragging");
+    });
+    window.addEventListener("dragleave", function (event) {
+      if (event.relatedTarget === null) {
+        document.body.classList.remove("dragging");
+      }
+    });
+    window.addEventListener("drop", function (event) {
+      event.preventDefault();
+      document.body.classList.remove("dragging");
+      var file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      readFile(file);
+    });
+  }
+
+  window.MapChecker = {
+    elementsFrom: elementsFrom,
+    compare: compare,
+    foldName: foldName,
+    roster: DOC_ROSTER,
+    load: function (text) {
+      var list = elementsFrom(text);
+      if (list) {
+        setWorlds(list);
+      }
+      return list;
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
