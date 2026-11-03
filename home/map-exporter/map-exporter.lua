@@ -1,7 +1,8 @@
 --[[
 	map-exporter
 	reads the map you have mapped (dream elements, their notes, markers and
-	connections) and writes it to map-export.txt in your executor's workspace.
+	connections) and writes it to your executor's workspace, in the folder
+	"home map exports", as {date}-EXPORT-{time}.txt.
 
 	this is read only. it never adds, moves, removes or saves anything on your
 	map, and it never fires the map's DataRemoteEvent.
@@ -16,7 +17,21 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local OUTPUT_FILE = "map-export.txt"
+-- every run writes its own file, so an old export is never overwritten
+local EXPORT_FOLDER = "home map exports"
+
+local function exportFileName()
+	return string.format("%s-EXPORT-%s.txt", os.date("%Y-%m-%d"), os.date("%H-%M-%S"))
+end
+
+local function ensureFolder(path)
+	if type(isfolder) == "function" and isfolder(path) then
+		return
+	end
+	if type(makefolder) == "function" then
+		pcall(makefolder, path)
+	end
+end
 
 -- marker names used by the map tool's MarkerPickerFrame
 local MARKER_NAMES = { [1] = "DeadEnd", [2] = "Badge", [3] = "AltExit" }
@@ -458,14 +473,14 @@ print(string.format(
 ))
 
 if type(writefile) == "function" then
-	local ok, err = pcall(writefile, OUTPUT_FILE, text)
+	local exportPath = EXPORT_FOLDER .. "/" .. exportFileName()
+	ensureFolder(EXPORT_FOLDER)
+
+	local ok, err = pcall(writefile, exportPath, text)
 	if ok then
-		print(string.format(
-			"[map-exporter] saved workspace/%s (%d lines, %d KB). nothing on the map was changed.",
-			OUTPUT_FILE, select(2, text:gsub("\n", "\n")), math.floor(#text / 1024)
-		))
+		print("saved map export to workspace. " .. exportPath)
 	else
-		warn("[map-exporter] could not write " .. OUTPUT_FILE .. ": " .. tostring(err))
+		warn("[map-exporter] could not write " .. exportPath .. ": " .. tostring(err))
 		print(text)
 	end
 else
