@@ -388,15 +388,102 @@
     return pieces;
   }
 
+  // A few pieces of the document are written short, and a few hold more than one
+  // world. A few worlds can never be mapped at all - the root place, and worlds
+  // where items are disabled - so they are left out instead of being chased.
+  // The key is the piece with spacing and punctuation ignored; an empty list
+  // means the piece is not a world you can go and map.
+  var PIECE_FIXES = {};
+  [
+    ["home", []],
+    ["home rpg", []],
+    ["home rpg the dark side of the moon dirt road", ["the dark side of the moon"]],
+    ["kontrived perfunctory anima", []],
+    ["forgotten seabed", []],
+    ["dirt road: iron valley", []],
+    ["iron valley", []],
+    ["wrong turn first stage of grief", ["Wrong turn", "First Stage of Grief"]],
+    ["ex", ["facadus gladi EX"]],
+    ["re", ["re: FOURTH WALL"]],
+    ["street", ["CITY STREET"]],
+    ["neon", ["neon city!!!"]],
+    ["skyscape", ["shattered skyscape"]],
+    ["v?v", ["V?V?"]],
+    ["a place", ["a place where you could relax"]],
+    ["you cold relax cerebellum plexiglass", ["a place where you could relax", "cerebellum", "plexiglass"]],
+    ["you could relax cerebellum plexiglass", ["a place where you could relax", "cerebellum", "plexiglass"]]
+  ].forEach(function (row) {
+    PIECE_FIXES[foldName(row[0])] = row[1];
+  });
+
+  // the worlds a piece really stands for, written the way the worlds are named
+  function correctText(text) {
+    var fix = PIECE_FIXES[foldName(text)];
+    return fix ? fix.slice() : [String(text)];
+  }
+
+  // a corrected name is already on the map when the map carries the same name,
+  // or a long enough piece of it ("FOURTH WALL" for "re: FOURTH WALL"), so a
+  // world spelled out here is not listed again
+  function onMap(name, mapKeys) {
+    var key = foldName(name);
+    if (!key) {
+      return true;
+    }
+    if (mapKeys[key]) {
+      return true;
+    }
+    var found = false;
+    Object.keys(mapKeys).forEach(function (other) {
+      if (found || other.length < PREFIX_KEY || key.length <= other.length) {
+        return;
+      }
+      if (key.indexOf(other) !== -1) {
+        found = true;
+      }
+    });
+    return found;
+  }
+
+  // every row is one world: a piece that holds several worlds becomes one row
+  // each, and the worlds that can never be mapped are dropped
+  function applyFixes(items, mapKeys) {
+    var out = [];
+    var seen = {};
+    var keys = mapKeys || {};
+
+    items.forEach(function (item) {
+      var fixed = !!PIECE_FIXES[foldName(item.text)];
+      correctText(item.text).forEach(function (name) {
+        var key = foldName(name);
+        if (!key || seen[key]) {
+          return;
+        }
+        if (keys[key] || (fixed && onMap(name, keys))) {
+          return;
+        }
+        seen[key] = true;
+        out.push({ text: name, before: item.before, after: item.after, at: item.at });
+      });
+    });
+
+    return out;
+  }
+
   function compare(list) {
     var doc = foldDocument();
+    var mapKeys = {};
     var known = {};
     var prefixes = {};
     var longest = MIN_KEY;
 
     list.forEach(function (world) {
       var key = world.key;
-      if (!key || key.length < MIN_KEY) {
+      if (!key) {
+        return;
+      }
+      mapKeys[key] = true;
+      if (key.length < MIN_KEY) {
         return;
       }
       known[key] = world;
@@ -589,7 +676,7 @@
     });
 
     return {
-      missing: missing,
+      missing: applyFixes(missing, mapKeys),
       extras: extras,
       matched: matched,
       worlds: list.length,
@@ -605,6 +692,7 @@
       return { name: name, key: foldName(name) };
     });
     var known = {};
+    var mapKeys = {};
     var matched = 0;
     var extras = [];
 
@@ -613,6 +701,7 @@
         return;
       }
       known[world.key] = world;
+      mapKeys[world.key] = true;
     });
 
     var used = {};
@@ -642,7 +731,7 @@
     });
 
     return {
-      missing: missing,
+      missing: applyFixes(missing, mapKeys),
       extras: extras,
       matched: matched,
       worlds: list.length,
@@ -716,6 +805,7 @@
         : "<p>The document writes its worlds as one long run of names with no separators, so a piece above can hold more than one world when names of the same kind sit together: it is the piece of the document between the world before it and the world after it. Pieces that start with an ALL CAPS name, a number or an underscore are split off. Paste the document's world list above to get one row per world instead.</p>")
       + "<p>Names are compared with spacing, punctuation and capitals ignored, and a name that only differs in its ending still counts as mapped, so a world is only missing when it really is not there.</p>"
       + "<p>Portals are not worlds and are skipped, along with the name they point at. The <code>KEY</code> card is a legend, not a world.</p>"
+      + "<p>The root place and the worlds where items are disabled cannot be mapped, so they are left out, and a name the document writes short is listed in full.</p>"
       + "</div>");
 
     dom.out.innerHTML = parts.join("");
@@ -880,6 +970,8 @@
     elementsFrom: elementsFrom,
     compare: compare,
     compareNames: compareNames,
+    correctText: correctText,
+    applyFixes: applyFixes,
     setNameList: setNameList,
     foldName: foldName,
     splitRun: splitRun,
