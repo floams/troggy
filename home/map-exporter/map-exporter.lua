@@ -1,7 +1,8 @@
 --[[
 	map-exporter
 	reads the map you have mapped (dream elements, their notes, markers and
-	connections) and writes it to your executor's workspace, in the folder
+	connections), plus every dream saved in your library even if it was never
+	placed down, and writes it to your executor's workspace, in the folder
 	"home map exports", as {date}-EXPORT-{time}.txt.
 
 	this is read only. it never adds, moves, removes or saves anything on your
@@ -269,6 +270,18 @@ end
 
 local function buildExport(records, byInstance, library, libraryOrder)
 	local lines = {}
+
+	local placedKeys = {}
+	for _, record in ipairs(records) do
+		placedKeys[tostring(record.placeId)] = true
+	end
+
+	local unplaced = 0
+	for _, entry in ipairs(libraryOrder) do
+		if not placedKeys[tostring(entry.placeId)] then
+			unplaced = unplaced + 1
+		end
+	end
 	local function push(line)
 		table.insert(lines, line or "")
 	end
@@ -393,6 +406,10 @@ local function buildExport(records, byInstance, library, libraryOrder)
 	for _, entry in ipairs(libraryOrder) do
 		pushf("%s  %q", tostring(entry.placeId), entry.name)
 
+		if not placedKeys[tostring(entry.placeId)] then
+			push("    saved, not placed")
+		end
+
 		if #entry.markerNames > 0 then
 			push("    markers: " .. table.concat(entry.markerNames, ", "))
 		end
@@ -435,12 +452,37 @@ local function buildExport(records, byInstance, library, libraryOrder)
 		end
 	end
 
+	push("")
+	push("== SAVED DREAMS ==")
+	push("every dream saved in your library, placed down or not, one line each")
+	push("")
+
+	for index, entry in ipairs(libraryOrder) do
+		local payload = {
+			PlaceId = entry.placeId,
+			ScalePosition = { 0.5, 0.5 },
+			Exits = {},
+			Color = { 1, 1, 1 },
+			Name = entry.name,
+			ImageId = entry.image,
+			Markers = entry.markers,
+			Note = entry.note,
+			Placed = placedKeys[tostring(entry.placeId)] == true,
+		}
+
+		local encoded, json = pcall(HttpService.JSONEncode, HttpService, payload)
+		if encoded then
+			pushf("[L%d] %s", index, json)
+		end
+	end
+
 	return table.concat(lines, "\n") .. "\n", {
 		elements = #records,
 		connections = connectionCount,
 		markers = markerCount,
 		notes = noteCount,
 		library = #libraryOrder,
+		unplaced = unplaced,
 	}
 end
 
@@ -468,8 +510,8 @@ end
 local text, summary = buildExport(records, byInstance, library, libraryOrder)
 
 print(string.format(
-	"[map-exporter] read %d elements, %d connections, %d markers, %d notes, %d library dreams",
-	summary.elements, summary.connections, summary.markers, summary.notes, summary.library
+	"[map-exporter] read %d elements, %d connections, %d markers, %d notes, %d library dreams (%d saved but not placed)",
+	summary.elements, summary.connections, summary.markers, summary.notes, summary.library, summary.unplaced
 ))
 
 if type(writefile) == "function" then

@@ -204,6 +204,19 @@ local function scanRaw(text)
 	return found
 end
 
+-- dreams that are saved in the library but were never placed down have no
+-- position of their own, so they are read separately from the placed squares
+local function scanLibrary(text)
+	local found = {}
+	for line in (tostring(text or "") .. "\n"):gmatch("([^\n]*)\n") do
+		local index, json = line:match("^%s*%[L(%d+)%]%s*(%{.*%})%s*$")
+		if index and json then
+			table.insert(found, { index = tonumber(index), json = json })
+		end
+	end
+	return found
+end
+
 local function numberOr(value, fallback)
 	local number = tonumber(value)
 	if number == nil then
@@ -353,12 +366,27 @@ local function parseText(text)
 
 	local trimmed = raw:gsub("^%s+", ""):gsub("%s+$", "")
 	if trimmed == "" then
-		return nil
+		return nil, {}
+	end
+
+	local library = {}
+
+	local function readLibrary(list)
+		for index, entry in ipairs(list or {}) do
+			local record = normalize(index, entry)
+			if record then
+				table.insert(library, record)
+			end
+		end
 	end
 
 	if trimmed:sub(1, 1) == "{" or trimmed:sub(1, 1) == "[" then
 		local data = decode(trimmed)
 		if type(data) == "table" then
+			if data.library ~= nil then
+				readLibrary(data.library)
+			end
+
 			local list = data
 			if data.elements ~= nil then
 				list = data.elements
@@ -375,7 +403,7 @@ local function parseText(text)
 					end
 				end
 				if #records > 0 then
-					return records
+					return records, library
 				end
 			end
 		end
@@ -390,17 +418,24 @@ local function parseText(text)
 				table.insert(records, record)
 			end
 		end
+		for _, item in ipairs(scanLibrary(raw)) do
+			local record = normalize(item.index, decode(item.json))
+			if record then
+				table.insert(library, record)
+			end
+		end
+
 		if #records > 0 then
-			return records
+			return records, library
 		end
 	end
 
 	local legacy = scanLegacy(raw)
 	if #legacy > 0 then
-		return legacy
+		return legacy, library
 	end
 
-	return nil
+	return nil, library
 end
 
 -- keeps the first copy of every dream and points everything that referred to a
@@ -421,6 +456,69 @@ local function dedupe(records)
 	end
 
 	return kept, duplicates, resolve
+end
+
+-- everything the library saved that the map itself does not have placed down
+local function libraryExtras(records, library)
+	local placed = {}
+	for _, record in ipairs(records) do
+		placed[record.key] = true
+	end
+
+	local extras = {}
+	for _, entry in ipairs(library or {}) do
+		if not placed[entry.key] then
+			placed[entry.key] = true
+			table.insert(extras, entry)
+		end
+	end
+
+	return extras
+end
+
+local function cloneRecordAt(record, x, y)
+	local copy = {}
+	for key, value in pairs(record) do
+		copy[key] = value
+	end
+	copy.x = x
+	copy.y = y
+	return copy
+end
+
+-- saved dreams had no place on the map, so they take the first free squares,
+-- clear of whatever is already on the canvas
+local function freeSpots(count, existing)
+	local spots = {}
+	local step = 0.12
+	local y = 0.06
+
+	local function taken(x, y)
+		for _, item in ipairs(existing) do
+			if math.abs(item.x - x) < step * 0.9 and math.abs(item.y - y) < step * 0.9 then
+				return true
+			end
+		end
+		for _, spot in ipairs(spots) do
+			if math.abs(spot[1] - x) < step * 0.9 and math.abs(spot[2] - y) < step * 0.9 then
+				return true
+			end
+		end
+		return false
+	end
+
+	while y < 1 and #spots < count do
+		local x = 0.06
+		while x < 1 and #spots < count do
+			if not taken(x, y) then
+				table.insert(spots, { x, y })
+			end
+			x = x + step
+		end
+		y = y + step
+	end
+
+	return spots
 end
 
 local function cleanChildren(container)
@@ -731,7 +829,7 @@ local function removeDuplicateSquares(shiftingFrame)
 	return removed, groups
 end
 
-local function inject(shiftingFrame, mapGui, records, clearFirst)
+local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local kept, duplicates, resolve = dedupe(records)
 	local templates, fallback, canvasSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = firstExitLine(shiftingFrame)
@@ -739,7 +837,7 @@ local function inject(shiftingFrame, mapGui, records, clearFirst)
 
 	local removed = clearFirst and removeAllMapped(shiftingFrame) or 0
 	if not fallback then
-		return 0, 0, #duplicates, removed, "the map library is empty, open the map once so your dreams load"
+		return 0, 0, #duplicates, removed, 0, "the map library is empty, open the map once so your dreams load"
 	end
 
 	local placed = {}
@@ -770,7 +868,35 @@ local function inject(shiftingFrame, mapGui, records, clearFirst)
 		end
 	end
 
-	return made, links, #duplicates, removed
+	-- dreams that were saved but never placed still come across, into the first
+	-- free squares, so an import loses nothing the library had
+	local extras = libraryExtras(records, library)
+	local occupied = {}
+	for _, entry in ipairs(canvasElements(shiftingFrame)) do
+		table.insert(occupied, { x = entry.x, y = entry.y })
+	end
+
+	local spots = freeSpots(#extras, occupied)
+	local extrasMade = 0
+
+	for index, entry in ipairs(extras) do
+		local spot = spots[index]
+		if spot then
+			local element = createElement(
+				cloneRecordAt(entry, spot[1], spot[2]),
+				shiftingFrame,
+				templates,
+				fallback,
+				canvasSize,
+				markerTemplates
+			)
+			if element then
+				extrasMade = extrasMade + 1
+			end
+		end
+	end
+
+	return made, links, #duplicates, removed, extrasMade
 end
 
 local function shortName(path)
@@ -807,24 +933,24 @@ end
 
 local function readExport(path)
 	if type(readfile) ~= "function" then
-		return nil, "this executor has no readfile"
+		return nil, nil, "this executor has no readfile"
 	end
 
 	local ok, text = pcall(readfile, path)
 	if not ok or type(text) ~= "string" then
-		return nil, "could not read " .. shortName(path)
+		return nil, nil, "could not read " .. shortName(path)
 	end
 
-	local records = parseText(text)
+	local records, library = parseText(text)
 	if not records or #records == 0 then
-		return nil, "no elements in " .. shortName(path)
+		return nil, library, "no elements in " .. shortName(path)
 	end
 
-	return records
+	return records, library
 end
 
 local ui = {}
-local state = { files = {}, path = nil, records = nil, duplicateCount = 0 }
+local state = { files = {}, path = nil, records = nil, library = {}, extras = 0, duplicateCount = 0 }
 
 local function say(message)
 	print("[map-injector] " .. message)
@@ -857,6 +983,10 @@ local function updateStatus()
 			text = text .. string.format(" :: %d dupes", state.duplicateCount)
 		end
 
+		if state.extras > 0 then
+			text = text .. string.format(" :: %d saved not placed", state.extras)
+		end
+
 		ui.status.Text = text
 	end
 end
@@ -878,6 +1008,8 @@ end
 
 local function loadSelected()
 	state.records = nil
+	state.library = {}
+	state.extras = 0
 	state.duplicateCount = 0
 
 	if not state.path then
@@ -885,7 +1017,7 @@ local function loadSelected()
 		return
 	end
 
-	local records, problem = readExport(state.path)
+	local records, library, problem = readExport(state.path)
 	if not records then
 		say(problem)
 		updateStatus()
@@ -893,6 +1025,8 @@ local function loadSelected()
 	end
 
 	state.records = records
+	state.library = library or {}
+	state.extras = #libraryExtras(records, state.library)
 	local _, duplicates = dedupe(records)
 	state.duplicateCount = #duplicates
 	updateStatus()
@@ -914,6 +1048,8 @@ local function refreshFiles()
 	if #state.files == 0 then
 		state.path = nil
 		state.records = nil
+		state.library = {}
+		state.extras = 0
 		state.duplicateCount = 0
 		ui.list.CanvasSize = UDim2.fromOffset(0, 0)
 		say("no exports in workspace/" .. EXPORT_FOLDER .. " :: press export now")
@@ -1010,7 +1146,8 @@ local function actionInject()
 	end
 
 	local existing = #canvasElements(shiftingFrame)
-	local made, links, skipped, _, problem = inject(shiftingFrame, mapGui, state.records, false)
+	local made, links, skipped, _, extrasMade, problem =
+		inject(shiftingFrame, mapGui, state.records, state.library, false)
 
 	if problem then
 		say(problem)
@@ -1018,6 +1155,9 @@ local function actionInject()
 	end
 
 	local message = string.format("placed %d squares :: %d connections", made, links)
+	if extrasMade > 0 then
+		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
+	end
 	if skipped > 0 then
 		message = message .. string.format(" :: skipped %d dupes", skipped)
 	end
@@ -1040,7 +1180,8 @@ local function actionReplace()
 		return
 	end
 
-	local made, links, skipped, removed, problem = inject(shiftingFrame, mapGui, state.records, true)
+	local made, links, skipped, removed, extrasMade, problem =
+		inject(shiftingFrame, mapGui, state.records, state.library, true)
 
 	if problem then
 		say(problem)
@@ -1048,6 +1189,9 @@ local function actionReplace()
 	end
 
 	local message = string.format("removed %d squares :: placed %d :: %d connections", removed, made, links)
+	if extrasMade > 0 then
+		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
+	end
 	if skipped > 0 then
 		message = message .. string.format(" :: skipped %d dupes", skipped)
 	end
