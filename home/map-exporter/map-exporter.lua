@@ -132,6 +132,18 @@ local function scalePosition(element, size)
 	return x, y
 end
 
+-- the exact position as the map stores it: scale plus offset per axis, so a
+-- square can be put back on the same spot even if the canvas is a different size
+local function rawPosition(element)
+	local position = element.Position
+	return {
+		position.X.Scale,
+		position.Y.Scale,
+		position.X.Offset,
+		position.Y.Offset,
+	}
+end
+
 local function readInventory(inventoryFrame)
 	local library = {}
 	local order = {}
@@ -198,6 +210,7 @@ local function readElements(shiftingFrame, library)
 				placeId = placeId,
 				x = x,
 				y = y,
+				scaleOffset = rawPosition(child),
 				color = colorOf(child),
 				note = noteValue and tostring(noteValue.Value) or "",
 				markers = markerIds,
@@ -436,6 +449,7 @@ local function buildExport(records, byInstance, library, libraryOrder)
 		local payload = {
 			PlaceId = record.placeId,
 			ScalePosition = { record.x, record.y },
+			Position = record.scaleOffset,
 			Exits = exitIndices,
 			Color = { record.color.R, record.color.G, record.color.B },
 			Name = record.name,

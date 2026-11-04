@@ -232,6 +232,18 @@ local function normalize(index, data)
 	local position = data.ScalePosition or data.position or {}
 	local color = data.Color or data.color or {}
 
+	-- newer exports keep the exact scale and offset the map stored, which puts a
+	-- square back on the same pixels even when the canvas has a different size
+	local scaleOffset = nil
+	if type(data.Position) == "table" and #data.Position == 4 then
+		scaleOffset = {
+			numberOr(data.Position[1], 0),
+			numberOr(data.Position[2], 0),
+			numberOr(data.Position[3], 0),
+			numberOr(data.Position[4], 0),
+		}
+	end
+
 	local markers = {}
 	for _, id in ipairs(data.Markers or data.markers or {}) do
 		local number = tonumber(id)
@@ -264,6 +276,7 @@ local function normalize(index, data)
 		},
 		x = numberOr(position[1] or position.x, 0),
 		y = numberOr(position[2] or position.y, 0),
+		scaleOffset = scaleOffset,
 		exits = exits,
 	}
 end
@@ -478,19 +491,21 @@ end
 
 -- saved dreams had no place on the map, so they take the first free squares,
 -- clear of whatever is already on the canvas
-local function freeSpots(count, existing)
+local function freeSpots(count, existing, stepX, stepY)
+	stepX = stepX or 0.12
+	stepY = stepY or 0.12
+
 	local spots = {}
-	local step = 0.12
-	local y = 0.06
+	local y = stepY / 2
 
 	local function taken(x, y)
 		for _, item in ipairs(existing) do
-			if math.abs(item.x - x) < step * 0.9 and math.abs(item.y - y) < step * 0.9 then
+			if math.abs(item.x - x) < stepX * 0.9 and math.abs(item.y - y) < stepY * 0.9 then
 				return true
 			end
 		end
 		for _, spot in ipairs(spots) do
-			if math.abs(spot[1] - x) < step * 0.9 and math.abs(spot[2] - y) < step * 0.9 then
+			if math.abs(spot[1] - x) < stepX * 0.9 and math.abs(spot[2] - y) < stepY * 0.9 then
 				return true
 			end
 		end
@@ -498,14 +513,14 @@ local function freeSpots(count, existing)
 	end
 
 	while y < 1 and #spots < count do
-		local x = 0.06
+		local x = stepX / 2
 		while x < 1 and #spots < count do
 			if not taken(x, y) then
 				table.insert(spots, { x, y })
 			end
-			x = x + step
+			x = x + stepX
 		end
-		y = y + step
+		y = y + stepY
 	end
 
 	return spots
@@ -655,8 +670,19 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	element.Name = record.placeId == "CUSTOM" and "CUSTOM" or tostring(record.placeId)
 	element.Visible = true
 	-- this map has no limits on where a square can sit, so the saved coordinates
-	-- go in untouched, even when they are negative or past the canvas edge
-	element.Position = UDim2.fromScale(record.x, record.y)
+	-- go in untouched, even when they are negative or past the canvas edge. the
+	-- exact scale and offset win when the export has them, so a square lands on
+	-- the same pixels rather than only the same fraction of a different canvas
+	if record.scaleOffset then
+		element.Position = UDim2.new(
+			record.scaleOffset[1],
+			record.scaleOffset[3],
+			record.scaleOffset[2],
+			record.scaleOffset[4]
+		)
+	else
+		element.Position = UDim2.fromScale(record.x, record.y)
+	end
 	if canvasSize then
 		element.Size = canvasSize
 	end
@@ -934,7 +960,20 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 		table.insert(occupied, { x = entry.x, y = entry.y })
 	end
 
-	local spots = freeSpots(#extras, occupied)
+	-- saved dreams get spaced by the size of a real square, so they do not land
+	-- on top of each other or on top of the squares that were just placed
+	local stepX, stepY = 0.12, 0.12
+	if canvasSize then
+		local area = shiftingFrame.AbsoluteSize
+		if area.X > 0 then
+			stepX = math.max(0.12, canvasSize.X.Scale + canvasSize.X.Offset / area.X + 0.02)
+		end
+		if area.Y > 0 then
+			stepY = math.max(0.12, canvasSize.Y.Scale + canvasSize.Y.Offset / area.Y + 0.02)
+		end
+	end
+
+	local spots = freeSpots(#extras, occupied, stepX, stepY)
 	local extrasMade = 0
 
 	for index, entry in ipairs(extras) do
