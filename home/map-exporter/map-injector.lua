@@ -547,7 +547,7 @@ end
 -- the map tool's own squares are the best template: they already carry the
 -- clipper, label, marker holder and exits lists the tool expects
 local function collectTemplates(shiftingFrame, mapGui)
-	local templates, fallback, canvasSize = {}, nil, nil
+	local templates, fallback = {}, nil
 	local markerTemplates = {}
 
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
@@ -555,7 +555,6 @@ local function collectTemplates(shiftingFrame, mapGui)
 			local key = templateKey(child)
 			templates[key] = templates[key] or child
 			fallback = fallback or child
-			canvasSize = canvasSize or child.Size
 
 			local holder = child:FindFirstChild("MarkerHolder")
 			if holder then
@@ -584,7 +583,7 @@ local function collectTemplates(shiftingFrame, mapGui)
 		end
 	end
 
-	return templates, fallback, canvasSize, markerTemplates
+	return templates, fallback, markerTemplates
 end
 
 local function firstExitLine(shiftingFrame)
@@ -617,6 +616,16 @@ local function firstEntranceLink(shiftingFrame)
 	return nil
 end
 
+-- the map's own blank connection, so its arrow and stroke come along
+local function lineTemplate(mapGui, shiftingFrame)
+	local templates = mapGui and deepFind(mapGui, "Templates")
+	local line = templates and templates:FindFirstChild("LineElement")
+	if line then
+		return line
+	end
+	return firstExitLine(shiftingFrame)
+end
+
 local function applyMarkers(element, record, markerTemplates)
 	local holder = ensureChild(element, "MarkerHolder", "Folder")
 	cleanChildren(holder)
@@ -638,70 +647,109 @@ local function applyMarkers(element, record, markerTemplates)
 	end
 end
 
--- a zoom is a scale sitting above the canvas, which stretches every offset in
--- the frame. the tool re-sizes its own squares so they keep their pixels, so a
--- clone has to be held at its pixel size too, or it swells with the zoom. each
--- square remembers the size in pixels and how far it should sit from the saved
--- spot, and is put back there every frame
-local pinned = {}
-local sizeFrame = nil
-local sizeUpdate = nil
+-- the map's own numbers, taken from its MapScript: a square is a fixed fraction
+-- of the canvas at a fraction of the canvas, and zooming resizes the canvas in
+-- pixels, so a square written this way zooms with the map like the map's own do
+local SQUARE_SIZE = UDim2.fromScale(0.07944915254237288, 0.1482213438735178)
 
-local function uiScaleOf(inst)
-	local scale = 1
-	local node = inst
-	local guard = 0
+-- the map's own line maths: length and midpoint in the source square's pixels,
+-- turned into fractions of it, plus the angle that makes the bar follow the line
+local function drawLine(line, x1, y1, x2, y2)
+	if not line then
+		return
+	end
 
-	while node and guard < 60 do
-		for _, child in ipairs(node:GetChildren()) do
-			if child:IsA("UIScale") then
-				scale = scale * child.Scale
-			end
+	local parent = line.Parent
+	if parent and parent.ClassName == "Folder" then
+		parent = parent.Parent
+	end
+	if not parent then
+		return
+	end
+
+	local size = parent.AbsoluteSize
+	if size.X <= 0 or size.Y <= 0 then
+		return
+	end
+
+	local length = math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+
+	line.Size = UDim2.fromScale(length / size.X, 0.05)
+	line.Position = UDim2.fromScale(((x1 + x2) / 2) / size.X, ((y1 + y2) / 2) / size.Y)
+	line.Rotation = math.deg(math.atan2(y2 - y1, x2 - x1))
+end
+
+-- a connection runs from the middle of the square that exits to the middle of the
+-- square it points at, both measured against the canvas
+local function drawLineBtwnElements(line, source, target, shiftingFrame)
+	if not line or not source or not target or not shiftingFrame then
+		return
+	end
+
+	local canvas = shiftingFrame.AbsoluteSize
+	if canvas.X <= 0 or canvas.Y <= 0 then
+		return
+	end
+
+	local mine = source.Position
+	local theirs = target.Position
+
+	local fromX = mine.X.Scale * canvas.X + mine.X.Offset
+	local fromY = mine.Y.Scale * canvas.Y + mine.Y.Offset
+	local toX = theirs.X.Scale * canvas.X + theirs.X.Offset
+	local toY = theirs.Y.Scale * canvas.Y + theirs.Y.Offset
+
+	drawLine(
+		line,
+		0.5 * source.AbsoluteSize.X,
+		0.5 * source.AbsoluteSize.Y,
+		toX - fromX + 0.5 * target.AbsoluteSize.X,
+		toY - fromY + 0.5 * target.AbsoluteSize.Y
+	)
+end
+
+-- what the map does to a square once it is down: the size it always uses, no
+-- faded out look, and its markers showing again
+local function normalizeElement(element)
+	if not element then
+		return
+	end
+
+	local clipper = element:FindFirstChild("ImageClipper")
+	if clipper then
+		local border = clipper:FindFirstChild("ImageBorder")
+		if border then
+			border.Transparency = 0
 		end
 
-		node = node.Parent
-		guard = guard + 1
-	end
-
-	if scale <= 0 then
-		scale = 1
-	end
-
-	return scale
-end
-
-local function applySizes()
-	local scale = sizeFrame and uiScaleOf(sizeFrame) or 1
-
-	for element, want in pairs(pinned) do
-		if element.Parent then
-			local size = UDim2.fromOffset(want.width / scale, want.height / scale)
-			if element.Size ~= size then
-				element.Size = size
-			end
-
-			if want.hold > 0 then
-				if element.Position ~= want.position then
-					element.Position = want.position
-				end
-				want.hold = want.hold - 1
-			end
-		else
-			pinned[element] = nil
+		local thumbnail = clipper:FindFirstChild("Thumbnail")
+		if thumbnail then
+			thumbnail.ImageTransparency = 0
+			thumbnail.BackgroundTransparency = 0
 		end
 	end
-end
 
-local function watchSizes(shiftingFrame)
-	sizeFrame = shiftingFrame
-	applySizes()
+	local label = element:FindFirstChild("DreamLabel")
+	if label then
+		label.TextTransparency = 0
+	end
 
-	if not sizeUpdate then
-		sizeUpdate = RunService.RenderStepped:Connect(applySizes)
+	element.Size = SQUARE_SIZE
+
+	local holder = element:FindFirstChild("MarkerHolder")
+	if holder then
+		local markers = 0
+		for _, marker in ipairs(holder:GetChildren()) do
+			if marker.ClassName ~= "UIListLayout" then
+				marker.Size = UDim2.fromScale(1, 1)
+				markers = markers + 1
+			end
+		end
+		holder.Visible = markers > 0
 	end
 end
 
-local function createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
+local function createElement(record, shiftingFrame, templates, fallback, markerTemplates)
 	local template = templates[record.key] or fallback
 	if not template then
 		return nil, "the map library is empty, open the map once so your dreams load"
@@ -710,41 +758,11 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	local element = template:Clone()
 	element.Name = record.placeId == "CUSTOM" and "CUSTOM" or tostring(record.placeId)
 	element.Visible = true
-	-- this map has no limits on where a square can sit, so the saved coordinates
-	-- go in untouched, even when they are negative or past the canvas edge. the
-	-- exact scale and offset win when the export has them, so a square lands on
-	-- the same pixels rather than only the same fraction of a different canvas
-	if record.scaleOffset then
-		element.Position = UDim2.new(
-			record.scaleOffset[1],
-			record.scaleOffset[3],
-			record.scaleOffset[2],
-			record.scaleOffset[4]
-		)
-	else
-		element.Position = UDim2.fromScale(record.x, record.y)
-	end
-	-- squares on this map sit in a scaled space but are sized in pixels, and the
-	-- tool re-sizes its own squares on every zoom. a clone keeps the size it was
-	-- born with, so it has to be born in pixels or it grows and shrinks with the
-	-- zoom while the map's own squares stay put
-	local chipSize = false
-	if canvasSize then
-		element.Size = canvasSize
-	else
-		-- there is no square on the map to copy, so the sidebar chip is the only
-		-- size there is. its pixels are taken and held, or the zoom stretches it
-		local pixels = template.AbsoluteSize
-		local width = 96
-		local height = 96
-		if pixels and pixels.X > 0 and pixels.Y > 0 then
-			width = pixels.X
-			height = pixels.Y
-		end
 
-		element.Size = UDim2.fromOffset(width, height)
-		chipSize = true
-	end
+	-- the saved spot is a fraction of the canvas, which is exactly how the map
+	-- itself puts a square down, so this map has no limits and the zoom carries
+	-- the square with the map instead of stretching it
+	element.Position = UDim2.fromScale(record.x, record.y)
 
 	local exits = ensureChild(element, "Exits", "Folder")
 	local entrances = ensureChild(element, "Entrances", "Folder")
@@ -789,22 +807,12 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	applyMarkers(element, record, markerTemplates)
 
 	element.Parent = shiftingFrame
-
-	-- a square born from a chip is held at its pixels, since nothing else knows
-	-- how big it should be; one that copied a real square is left alone
-	if chipSize then
-		pinned[element] = {
-			width = element.Size.X.Offset,
-			height = element.Size.Y.Offset,
-			position = element.Position,
-			hold = 180,
-		}
-	end
+	normalizeElement(element)
 
 	return element
 end
 
-local function linkExit(source, target, template, counter)
+local function linkExit(source, target, template, shiftingFrame)
 	local exits = source:FindFirstChild("Exits")
 	if not exits then
 		return false
@@ -812,16 +820,22 @@ local function linkExit(source, target, template, counter)
 
 	local line = template and template:Clone() or Instance.new("Frame")
 	if not template then
-		line.Name = "Line" .. tostring(counter)
+		line.Name = "LineElement"
 		line.BackgroundTransparency = 1
 		line.Size = UDim2.fromOffset(1, 1)
 	end
+
+	line.Visible = true
 	line.Parent = exits
 
 	local value = line:FindFirstChild("Exit") or ensureChild(line, "Exit", "ObjectValue")
 	pcall(function()
 		value.Value = target
 	end)
+
+	-- without this the line exists but has no length or angle, which is why the
+	-- beams never showed up before
+	drawLineBtwnElements(line, source, target, shiftingFrame)
 
 	return true
 end
@@ -846,7 +860,6 @@ local function linkEntrance(target, source, template)
 end
 
 local function removeAllMapped(shiftingFrame)
-	pinned = {}
 
 	local removed = 0
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
@@ -1067,8 +1080,8 @@ end
 
 local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local kept, duplicates, resolve = dedupe(records)
-	local templates, fallback, canvasSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
-	local exitTemplate = firstExitLine(shiftingFrame)
+	local templates, fallback, markerTemplates = collectTemplates(shiftingFrame, mapGui)
+	local exitTemplate = lineTemplate(mapGui, shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
 
 	-- a square the map already holds counts as a duplicate too, so injecting the
@@ -1093,7 +1106,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local made = 0
 
 	for _, record in ipairs(wanted) do
-		local element = createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
+		local element = createElement(record, shiftingFrame, templates, fallback, markerTemplates)
 		if element then
 			placed[record] = element
 			made = made + 1
@@ -1101,7 +1114,6 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	end
 
 	local links = 0
-	local drawn = {}
 
 	for _, record in ipairs(wanted) do
 		local source = placed[record]
@@ -1110,10 +1122,9 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 				local targetRecord = resolve[reference]
 				local target = targetRecord and placed[targetRecord]
 				if target and target ~= source then
-					if linkExit(source, target, exitTemplate, links + 1) then
+					if linkExit(source, target, exitTemplate, shiftingFrame) then
 						linkEntrance(target, source, entranceTemplate)
 						links = links + 1
-						table.insert(drawn, { source, target })
 					end
 				end
 			end
