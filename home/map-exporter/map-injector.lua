@@ -624,6 +624,69 @@ local function applyMarkers(element, record, markerTemplates)
 	end
 end
 
+-- a zoom is a scale sitting above the canvas, which stretches every offset in
+-- the frame. the tool re-sizes its own squares so they keep their pixels, so a
+-- clone has to be held at its pixel size too, or it swells with the zoom. each
+-- square remembers the size in pixels and how far it should sit from the saved
+-- spot, and is put back there every frame
+local pinned = {}
+local sizeFrame = nil
+local sizeUpdate = nil
+
+local function uiScaleOf(inst)
+	local scale = 1
+	local node = inst
+	local guard = 0
+
+	while node and guard < 60 do
+		for _, child in ipairs(node:GetChildren()) do
+			if child:IsA("UIScale") then
+				scale = scale * child.Scale
+			end
+		end
+
+		node = node.Parent
+		guard = guard + 1
+	end
+
+	if scale <= 0 then
+		scale = 1
+	end
+
+	return scale
+end
+
+local function applySizes()
+	local scale = sizeFrame and uiScaleOf(sizeFrame) or 1
+
+	for element, want in pairs(pinned) do
+		if element.Parent then
+			local size = UDim2.fromOffset(want.width / scale, want.height / scale)
+			if element.Size ~= size then
+				element.Size = size
+			end
+
+			if want.hold > 0 then
+				if element.Position ~= want.position then
+					element.Position = want.position
+				end
+				want.hold = want.hold - 1
+			end
+		else
+			pinned[element] = nil
+		end
+	end
+end
+
+local function watchSizes(shiftingFrame)
+	sizeFrame = shiftingFrame
+	applySizes()
+
+	if not sizeUpdate then
+		sizeUpdate = RunService.RenderStepped:Connect(applySizes)
+	end
+end
+
 local function createElement(record, shiftingFrame, templates, fallback, pixelSize, markerTemplates)
 	local template = templates[record.key] or fallback
 	if not template then
@@ -656,11 +719,14 @@ local function createElement(record, shiftingFrame, templates, fallback, pixelSi
 		pixels = template.AbsoluteSize
 	end
 
+	local width = 96
+	local height = 96
 	if pixels and pixels.X > 0 and pixels.Y > 0 then
-		element.Size = UDim2.fromOffset(pixels.X, pixels.Y)
-	else
-		element.Size = UDim2.fromOffset(96, 96)
+		width = pixels.X
+		height = pixels.Y
 	end
+
+	element.Size = UDim2.fromOffset(width, height)
 
 	local exits = ensureChild(element, "Exits", "Folder")
 	local entrances = ensureChild(element, "Entrances", "Folder")
@@ -705,6 +771,15 @@ local function createElement(record, shiftingFrame, templates, fallback, pixelSi
 	applyMarkers(element, record, markerTemplates)
 
 	element.Parent = shiftingFrame
+
+	-- held for a moment so the map's own layout pass cannot resize or move it
+	pinned[element] = {
+		width = width,
+		height = height,
+		position = element.Position,
+		hold = 180,
+	}
+
 	return element
 end
 
@@ -768,7 +843,8 @@ local function clearLinkLayer()
 	linkLayer = nil
 end
 
-local function drawLinks(shiftingFrame, drawn)
+local function	drawLinks(shiftingFrame, drawn)
+	watchSizes(shiftingFrame)
 	clearLinkLayer()
 
 	if #drawn == 0 then
@@ -802,6 +878,7 @@ local function drawLinks(shiftingFrame, drawn)
 		end
 
 		local origin = shiftingFrame.AbsolutePosition
+		local scale = uiScaleOf(shiftingFrame)
 		for _, item in ipairs(bars) do
 			local from = item.from
 			local to = item.to
@@ -813,8 +890,8 @@ local function drawLinks(shiftingFrame, drawn)
 				local dy = b.Y - a.Y
 				local length = math.sqrt(dx * dx + dy * dy)
 
-				item.bar.Position = UDim2.fromOffset((a.X + b.X) / 2 - origin.X, (a.Y + b.Y) / 2 - origin.Y)
-				item.bar.Size = UDim2.fromOffset(math.max(1, length), 4)
+				item.bar.Position = UDim2.fromOffset(((a.X + b.X) / 2 - origin.X) / scale, ((a.Y + b.Y) / 2 - origin.Y) / scale)
+				item.bar.Size = UDim2.fromOffset(math.max(1, length) / scale, 4 / scale)
 				item.bar.Rotation = math.deg(math.atan(dy, dx))
 				item.bar.Visible = true
 			else
@@ -829,6 +906,7 @@ end
 
 local function removeAllMapped(shiftingFrame)
 	clearLinkLayer()
+	pinned = {}
 
 	local removed = 0
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
