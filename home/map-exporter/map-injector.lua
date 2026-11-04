@@ -533,7 +533,7 @@ end
 -- the map tool's own squares are the best template: they already carry the
 -- clipper, label, marker holder and exits lists the tool expects
 local function collectTemplates(shiftingFrame, mapGui)
-	local templates, fallback, pixelSize = {}, nil, nil
+	local templates, fallback, canvasSize = {}, nil, nil
 	local markerTemplates = {}
 
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
@@ -541,7 +541,7 @@ local function collectTemplates(shiftingFrame, mapGui)
 			local key = templateKey(child)
 			templates[key] = templates[key] or child
 			fallback = fallback or child
-			pixelSize = pixelSize or child.AbsoluteSize
+			canvasSize = canvasSize or child.Size
 
 			local holder = child:FindFirstChild("MarkerHolder")
 			if holder then
@@ -570,7 +570,7 @@ local function collectTemplates(shiftingFrame, mapGui)
 		end
 	end
 
-	return templates, fallback, pixelSize, markerTemplates
+	return templates, fallback, canvasSize, markerTemplates
 end
 
 local function firstExitLine(shiftingFrame)
@@ -687,7 +687,7 @@ local function watchSizes(shiftingFrame)
 	end
 end
 
-local function createElement(record, shiftingFrame, templates, fallback, pixelSize, markerTemplates)
+local function createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
 	local template = templates[record.key] or fallback
 	if not template then
 		return nil, "the map library is empty, open the map once so your dreams load"
@@ -714,19 +714,23 @@ local function createElement(record, shiftingFrame, templates, fallback, pixelSi
 	-- tool re-sizes its own squares on every zoom. a clone keeps the size it was
 	-- born with, so it has to be born in pixels or it grows and shrinks with the
 	-- zoom while the map's own squares stay put
-	local pixels = pixelSize
-	if not pixels or pixels.X <= 0 or pixels.Y <= 0 then
-		pixels = template.AbsoluteSize
-	end
+	local chipSize = false
+	if canvasSize then
+		element.Size = canvasSize
+	else
+		-- there is no square on the map to copy, so the sidebar chip is the only
+		-- size there is. its pixels are taken and held, or the zoom stretches it
+		local pixels = template.AbsoluteSize
+		local width = 96
+		local height = 96
+		if pixels and pixels.X > 0 and pixels.Y > 0 then
+			width = pixels.X
+			height = pixels.Y
+		end
 
-	local width = 96
-	local height = 96
-	if pixels and pixels.X > 0 and pixels.Y > 0 then
-		width = pixels.X
-		height = pixels.Y
+		element.Size = UDim2.fromOffset(width, height)
+		chipSize = true
 	end
-
-	element.Size = UDim2.fromOffset(width, height)
 
 	local exits = ensureChild(element, "Exits", "Folder")
 	local entrances = ensureChild(element, "Entrances", "Folder")
@@ -772,13 +776,16 @@ local function createElement(record, shiftingFrame, templates, fallback, pixelSi
 
 	element.Parent = shiftingFrame
 
-	-- held for a moment so the map's own layout pass cannot resize or move it
-	pinned[element] = {
-		width = width,
-		height = height,
-		position = element.Position,
-		hold = 180,
-	}
+	-- a square born from a chip is held at its pixels, since nothing else knows
+	-- how big it should be; one that copied a real square is left alone
+	if chipSize then
+		pinned[element] = {
+			width = element.Size.X.Offset,
+			height = element.Size.Y.Offset,
+			position = element.Position,
+			hold = 180,
+		}
+	end
 
 	return element
 end
@@ -824,88 +831,7 @@ local function linkEntrance(target, source, template)
 	return true
 end
 
--- the tool lays out the geometry of its own connection lines every frame, so a
--- cloned line never draws. these lines are drawn here instead and re-measured on
--- every frame, which keeps them on the squares as the map pans and zooms
-local linkLayer = nil
-local linkUpdate = nil
-
-local function clearLinkLayer()
-	if linkUpdate then
-		linkUpdate:Disconnect()
-		linkUpdate = nil
-	end
-
-	if linkLayer and linkLayer.Parent then
-		linkLayer:Destroy()
-	end
-
-	linkLayer = nil
-end
-
-local function	drawLinks(shiftingFrame, drawn)
-	watchSizes(shiftingFrame)
-	clearLinkLayer()
-
-	if #drawn == 0 then
-		return
-	end
-
-	local layer = Instance.new("Frame")
-	layer.Name = "MapInjectorLinks"
-	layer.BackgroundTransparency = 1
-	layer.BorderSizePixel = 0
-	layer.Size = UDim2.fromScale(1, 1)
-	layer.ZIndex = 0
-	layer.Parent = shiftingFrame
-	linkLayer = layer
-
-	local bars = {}
-	for _, link in ipairs(drawn) do
-		local bar = Instance.new("Frame")
-		bar.Name = "link"
-		bar.BackgroundColor3 = Color3.fromRGB(203, 166, 247)
-		bar.BorderSizePixel = 0
-		bar.AnchorPoint = Vector2.new(0.5, 0.5)
-		bar.ZIndex = 0
-		bar.Parent = layer
-		table.insert(bars, { bar = bar, from = link[1], to = link[2] })
-	end
-
-	local function update()
-		if not layer.Parent then
-			return
-		end
-
-		local origin = shiftingFrame.AbsolutePosition
-		local scale = uiScaleOf(shiftingFrame)
-		for _, item in ipairs(bars) do
-			local from = item.from
-			local to = item.to
-
-			if from and to and from.Parent and to.Parent then
-				local a = from.AbsolutePosition + from.AbsoluteSize / 2
-				local b = to.AbsolutePosition + to.AbsoluteSize / 2
-				local dx = b.X - a.X
-				local dy = b.Y - a.Y
-				local length = math.sqrt(dx * dx + dy * dy)
-
-				item.bar.Position = UDim2.fromOffset(((a.X + b.X) / 2 - origin.X) / scale, ((a.Y + b.Y) / 2 - origin.Y) / scale)
-				item.bar.Size = UDim2.fromOffset(math.max(1, length) / scale, 4 / scale)
-				item.bar.Rotation = math.deg(math.atan(dy, dx))
-				item.bar.Visible = true
-			else
-				item.bar.Visible = false
-			end
-		end
-	end
-
-	update()
-	linkUpdate = RunService.RenderStepped:Connect(update)
-end
-
 local function removeAllMapped(shiftingFrame)
-	clearLinkLayer()
 	pinned = {}
 
 	local removed = 0
@@ -1127,7 +1053,7 @@ end
 
 local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local kept, duplicates, resolve = dedupe(records)
-	local templates, fallback, pixelSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
+	local templates, fallback, canvasSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = firstExitLine(shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
 
@@ -1140,7 +1066,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local made = 0
 
 	for _, record in ipairs(kept) do
-		local element = createElement(record, shiftingFrame, templates, fallback, pixelSize, markerTemplates)
+		local element = createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
 		if element then
 			placed[record] = element
 			made = made + 1
@@ -1167,7 +1093,6 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 		end
 	end
 
-	drawLinks(shiftingFrame, drawn)
 
 	local extrasMade = 0
 
