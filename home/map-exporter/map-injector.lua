@@ -46,16 +46,6 @@ local COLORS = {
 
 local FONT = Enum.Font.Code
 
-local function clamp(value, low, high)
-	if value < low then
-		return low
-	end
-	if value > high then
-		return high
-	end
-	return value
-end
-
 local function deepFind(root, name)
 	if not root then
 		return nil
@@ -664,7 +654,9 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	local element = template:Clone()
 	element.Name = record.placeId == "CUSTOM" and "CUSTOM" or tostring(record.placeId)
 	element.Visible = true
-	element.Position = UDim2.fromScale(clamp(record.x, 0, 1), clamp(record.y, 0, 1))
+	-- this map has no limits on where a square can sit, so the saved coordinates
+	-- go in untouched, even when they are negative or past the canvas edge
+	element.Position = UDim2.fromScale(record.x, record.y)
 	if canvasSize then
 		element.Size = canvasSize
 	end
@@ -692,6 +684,18 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	local label = element:FindFirstChild("DreamLabel")
 	if label and (label:IsA("TextLabel") or label:IsA("TextButton")) then
 		label.Text = record.name
+	else
+		-- a library chip can name its label differently, so any label still showing
+		-- the chip's own name gets the dream's name instead
+		local templateName = tostring(template.Name)
+		for _, child in ipairs(element:GetDescendants()) do
+			if child:IsA("TextLabel") or child:IsA("TextButton") then
+				local text = tostring(child.Text or "")
+				if text == "CUSTOM" or text == templateName then
+					child.Text = record.name
+				end
+			end
+		end
 	end
 
 	local note = ensureChild(element, "NoteText", "StringValue")
@@ -827,6 +831,60 @@ local function removeDuplicateSquares(shiftingFrame)
 	end
 
 	return removed, groups
+end
+
+-- the panel up top counts what is mapped, and the tool only refreshes it when it
+-- adds a square itself, so the count is nudged after every change we make
+local function updateMappedCount(mapGui, shiftingFrame)
+	local count = #canvasElements(shiftingFrame)
+	local updated = 0
+
+	local roots = { mapGui }
+	local playerGui = getPlayerGui()
+	if playerGui and playerGui ~= mapGui then
+		table.insert(roots, playerGui)
+	end
+
+	for _, root in ipairs(roots) do
+		for _, child in ipairs(root:GetDescendants()) do
+			if child:IsA("TextLabel") or child:IsA("TextButton") then
+				local name = tostring(child.Name):lower()
+				local text = tostring(child.Text or "")
+				local lower = text:lower()
+
+				local isCount = name:find("count", 1, true)
+					or name:find("mapped", 1, true)
+					or name:find("places", 1, true)
+					or name:find("placed", 1, true)
+					or lower:find("mapped", 1, true)
+					or lower:find("places", 1, true)
+
+				if isCount and text:find("%d") then
+					local replaced, changes = text:gsub("%d+", tostring(count), 1)
+					if changes > 0 and replaced ~= text then
+						child.Text = replaced
+						updated = updated + 1
+					end
+				end
+			elseif child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("StringValue") then
+				local name = tostring(child.Name):lower()
+				if name:find("count", 1, true) or name:find("mapped", 1, true) or name:find("places", 1, true) then
+					if child:IsA("StringValue") then
+						pcall(function()
+							child.Value = tostring(count)
+						end)
+					else
+						pcall(function()
+							child.Value = count
+						end)
+					end
+					updated = updated + 1
+				end
+			end
+		end
+	end
+
+	return count, updated
 end
 
 local function inject(shiftingFrame, mapGui, records, library, clearFirst)
@@ -1154,12 +1212,19 @@ local function actionInject()
 		return
 	end
 
+	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+
 	local message = string.format("placed %d squares :: %d connections", made, links)
 	if extrasMade > 0 then
 		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
 	end
 	if skipped > 0 then
 		message = message .. string.format(" :: skipped %d dupes", skipped)
+	end
+	if counterUpdated > 0 then
+		message = message .. string.format(" :: counter shows %d", mapped)
+	else
+		message = message .. " :: could not find the mapped counter"
 	end
 	if existing > 0 then
 		message = message .. " :: the canvas already had squares, replace map swaps them out"
@@ -1188,6 +1253,8 @@ local function actionReplace()
 		return
 	end
 
+	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+
 	local message = string.format("removed %d squares :: placed %d :: %d connections", removed, made, links)
 	if extrasMade > 0 then
 		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
@@ -1195,24 +1262,36 @@ local function actionReplace()
 	if skipped > 0 then
 		message = message .. string.format(" :: skipped %d dupes", skipped)
 	end
+	if counterUpdated > 0 then
+		message = message .. string.format(" :: counter shows %d", mapped)
+	else
+		message = message .. " :: could not find the mapped counter"
+	end
 
 	say(message)
 	updateDupeButton()
 end
 
 local function actionRemoveAll()
-	local _, shiftingFrame = canTouchCanvas()
+	local mapGui, shiftingFrame = canTouchCanvas()
 	if not shiftingFrame then
 		return
 	end
 
 	local removed = removeAllMapped(shiftingFrame)
-	say(string.format("removed %d mapped squares", removed))
+	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+
+	local message = string.format("removed %d mapped squares", removed)
+	if counterUpdated > 0 then
+		message = message .. string.format(" :: counter shows %d", mapped)
+	end
+
+	say(message)
 	updateDupeButton()
 end
 
 local function actionRemoveDupes()
-	local _, shiftingFrame = canTouchCanvas()
+	local mapGui, shiftingFrame = canTouchCanvas()
 	if not shiftingFrame then
 		return
 	end
@@ -1222,6 +1301,8 @@ local function actionRemoveDupes()
 		say("no duplicate squares on the map")
 		return
 	end
+
+	updateMappedCount(mapGui, shiftingFrame)
 
 	local parts = {}
 	for key, count in pairs(groups) do
