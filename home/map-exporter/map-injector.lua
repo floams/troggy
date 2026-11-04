@@ -20,6 +20,9 @@
 		1. equip the map tool and open the map once (C) so your data loads
 		2. run this script:
 		   loadstring(game:HttpGet("https://raw.githubusercontent.com/floams/troggy/refs/heads/main/home/map-exporter/map-injector.lua"))()
+		placement follows the map's own MapScript: a square is a fraction of the
+		canvas at a fraction of the canvas, so zooming carries it with the map. keep
+		it that way, since pixel offsets are what broke the zoom before.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -559,7 +562,7 @@ end
 -- clipper, label, marker holder and exits lists the tool expects
 local function collectTemplates(shiftingFrame, mapGui)
 	local templates, fallback = {}, nil
-	local names, byName = {}, {}
+	local names, byName, byImage = {}, {}, {}
 	local markerTemplates = {}
 
 	local function remember(child)
@@ -577,6 +580,15 @@ local function collectTemplates(shiftingFrame, mapGui)
 		-- can stand in for it instead of leaving another nameless CUSTOM behind
 		if tonumber(child.Name) and text ~= "" and not byName[text:lower()] then
 			byName[text:lower()] = child
+		end
+
+		-- a custom square that lost its name still knows its picture, and the
+		-- picture is enough to find the dream it came from
+		local clipper = child:FindFirstChild("ImageClipper")
+		local thumbnail = clipper and clipper:FindFirstChild("Thumbnail")
+		local image = thumbnail and tostring(thumbnail.Image or "") or ""
+		if image ~= "" and text ~= "" and text:lower() ~= "custom" and not byImage[image] then
+			byImage[image] = child
 		end
 
 		local holder = child:FindFirstChild("MarkerHolder")
@@ -602,7 +614,7 @@ local function collectTemplates(shiftingFrame, mapGui)
 		end
 	end
 
-	return templates, fallback, markerTemplates, names, byName
+	return templates, fallback, markerTemplates, names, byName, byImage
 end
 
 local function firstExitLine(shiftingFrame)
@@ -768,16 +780,22 @@ local function normalizeElement(element)
 	end
 end
 
-local function createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName)
+local function createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName, byImage)
 	local key = record.key
 	local name = tostring(record.name or "")
 	local lower = name:lower()
+	local image = tostring(record.image or "")
 
 	-- a custom square that carries a world's name becomes that world, so it brings
 	-- the real place id, label and picture with it
 	local world = nil
-	if tostring(record.placeId) == "CUSTOM" and lower ~= "" then
-		world = byName[lower]
+	if tostring(record.placeId) == "CUSTOM" then
+		if lower ~= "" and lower ~= "custom" then
+			world = byName[lower]
+		end
+		if not world and image ~= "" and byImage[image] and tonumber(byImage[image].Name) then
+			world = byImage[image]
+		end
 	end
 
 	local template = world or templates[key] or fallback
@@ -809,17 +827,32 @@ local function createElement(record, shiftingFrame, templates, fallback, markerT
 		-- a real world already has its own picture, so only a custom square's own
 		-- image is allowed to replace it
 		local thumbnail = clipper:FindFirstChild("Thumbnail")
-		if thumbnail and not world and record.image ~= "" then
+		if thumbnail and not world and image ~= "" then
 			pcall(function()
-				thumbnail.Image = record.image
+				thumbnail.Image = image
 			end)
 		end
 	end
 
+	-- the name on the square, with a few ways back to it when the export lost it
 	local shown = name
 	if shown == "" or lower == "custom" then
-		local worldKey = world and templateKey(world) or key
-		shown = names[worldKey] or ""
+		shown = ""
+
+		if world then
+			local worldLabel = world:FindFirstChild("DreamLabel")
+			shown = worldLabel and tostring(worldLabel.Text or "") or ""
+		end
+
+		if shown == "" and image ~= "" and byImage[image] then
+			local imageLabel = byImage[image]:FindFirstChild("DreamLabel")
+			shown = imageLabel and tostring(imageLabel.Text or "") or ""
+		end
+
+		if shown == "" then
+			shown = names[world and templateKey(world) or key] or ""
+		end
+
 		if shown == "" and type(record.placeId) == "number" then
 			shown = tostring(record.placeId)
 		end
@@ -827,12 +860,12 @@ local function createElement(record, shiftingFrame, templates, fallback, markerT
 
 	local label = element:FindFirstChild("DreamLabel")
 	if label and (label:IsA("TextLabel") or label:IsA("TextButton")) then
-		if shown ~= "" then
+		-- the word CUSTOM is not a name, so a lost one is left blank instead of
+		-- pretending the dream has no title
+		if shown ~= "" or lower == "custom" then
 			label.Text = shown
 		end
 	else
-		-- a library chip can name its label differently, so any label still showing
-		-- the chip's own name gets the dream's name instead
 		local templateName = tostring(template.Name)
 		for _, child in ipairs(element:GetDescendants()) do
 			if child:IsA("TextLabel") or child:IsA("TextButton") then
@@ -1137,7 +1170,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local removed = clearFirst and removeAllMapped(shiftingFrame) or 0
 	local onCanvas = clearFirst and {} or existingElements(shiftingFrame)
 
-	local templates, fallback, markerTemplates, names, byName = collectTemplates(shiftingFrame, mapGui)
+	local templates, fallback, markerTemplates, names, byName, byImage = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = lineTemplate(mapGui, shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
 
@@ -1155,7 +1188,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 			table.insert(duplicates, record)
 			placed[record] = element
 		else
-			local created = createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName)
+			local created = createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName, byImage)
 			if created then
 				placed[record] = created
 				made = made + 1

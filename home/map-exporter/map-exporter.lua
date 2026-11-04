@@ -182,10 +182,18 @@ local function readInventory(inventoryFrame)
 	return library, order
 end
 
-local function readElements(shiftingFrame, library)
+local function readElements(shiftingFrame, library, libraryOrder)
 	local records = {}
 	local byInstance = {}
 	local canvasSize = shiftingFrame.AbsoluteSize
+
+	-- a dream that lost its label can still be recognised by its picture
+	local nameByImage = {}
+	for _, entry in ipairs(libraryOrder or {}) do
+		if entry.image ~= "" and entry.name ~= "" and entry.name:lower() ~= "custom" then
+			nameByImage[entry.image] = nameByImage[entry.image] or entry.name
+		end
+	end
 
 	for order, child in ipairs(shiftingFrame:GetChildren()) do
 		local exits = child:FindFirstChild("Exits")
@@ -240,6 +248,10 @@ local function readElements(shiftingFrame, library)
 					record.markers = known.markers
 					record.markerNames = known.markerNames
 				end
+			end
+
+			if (record.name == "" or record.name:lower() == "custom") and record.image ~= "" then
+				record.name = nameByImage[record.image] or record.name
 			end
 
 			-- two lines pointing at the same square are one connection, or the
@@ -527,7 +539,7 @@ end
 
 local inventoryFrame = deepFind(mapGui, "InventoryFrame")
 local library, libraryOrder = readInventory(inventoryFrame)
-local records, byInstance = readElements(shiftingFrame, library)
+local records, byInstance = readElements(shiftingFrame, library, libraryOrder)
 
 if #records == 0 and #libraryOrder == 0 then
 	warn("[map-exporter] nothing mapped found yet. open the map once (C), let your data load, then run this again.")
