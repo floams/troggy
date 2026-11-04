@@ -533,7 +533,7 @@ end
 -- the map tool's own squares are the best template: they already carry the
 -- clipper, label, marker holder and exits lists the tool expects
 local function collectTemplates(shiftingFrame, mapGui)
-	local templates, fallback, canvasSize = {}, nil, nil
+	local templates, fallback, pixelSize = {}, nil, nil
 	local markerTemplates = {}
 
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
@@ -541,7 +541,7 @@ local function collectTemplates(shiftingFrame, mapGui)
 			local key = templateKey(child)
 			templates[key] = templates[key] or child
 			fallback = fallback or child
-			canvasSize = canvasSize or child.Size
+			pixelSize = pixelSize or child.AbsoluteSize
 
 			local holder = child:FindFirstChild("MarkerHolder")
 			if holder then
@@ -570,7 +570,7 @@ local function collectTemplates(shiftingFrame, mapGui)
 		end
 	end
 
-	return templates, fallback, canvasSize, markerTemplates
+	return templates, fallback, pixelSize, markerTemplates
 end
 
 local function firstExitLine(shiftingFrame)
@@ -624,7 +624,7 @@ local function applyMarkers(element, record, markerTemplates)
 	end
 end
 
-local function createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
+local function createElement(record, shiftingFrame, templates, fallback, pixelSize, markerTemplates)
 	local template = templates[record.key] or fallback
 	if not template then
 		return nil, "the map library is empty, open the map once so your dreams load"
@@ -647,19 +647,19 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	else
 		element.Position = UDim2.fromScale(record.x, record.y)
 	end
-	-- the map's own squares keep their size when you zoom, which means they are
-	-- measured in pixels, not in a share of the canvas. take the size of a square
-	-- already on the map, and otherwise the chip's own pixel size, so an imported
-	-- square does not grow and shrink with the zoom
-	local size = canvasSize
-	if not size then
-		local pixels = template.AbsoluteSize
-		if pixels and pixels.X > 0 and pixels.Y > 0 then
-			size = UDim2.fromOffset(pixels.X, pixels.Y)
-		end
+	-- squares on this map sit in a scaled space but are sized in pixels, and the
+	-- tool re-sizes its own squares on every zoom. a clone keeps the size it was
+	-- born with, so it has to be born in pixels or it grows and shrinks with the
+	-- zoom while the map's own squares stay put
+	local pixels = pixelSize
+	if not pixels or pixels.X <= 0 or pixels.Y <= 0 then
+		pixels = template.AbsoluteSize
 	end
-	if size then
-		element.Size = size
+
+	if pixels and pixels.X > 0 and pixels.Y > 0 then
+		element.Size = UDim2.fromOffset(pixels.X, pixels.Y)
+	else
+		element.Size = UDim2.fromOffset(96, 96)
 	end
 
 	local exits = ensureChild(element, "Exits", "Folder")
@@ -1049,7 +1049,7 @@ end
 
 local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local kept, duplicates, resolve = dedupe(records)
-	local templates, fallback, canvasSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
+	local templates, fallback, pixelSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = firstExitLine(shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
 
@@ -1062,7 +1062,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local made = 0
 
 	for _, record in ipairs(kept) do
-		local element = createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
+		local element = createElement(record, shiftingFrame, templates, fallback, pixelSize, markerTemplates)
 		if element then
 			placed[record] = element
 			made = made + 1
