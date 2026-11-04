@@ -170,12 +170,18 @@ local function keyOf(placeId, name)
 	return text
 end
 
+-- the same world can be mapped more than once at different spots, so two squares
+-- are only duplicates when they are the same dream in the same place
+local function spotKey(key, x, y)
+	return string.format("%s@%.3f,%.3f", tostring(key or ""), tonumber(x) or 0, tonumber(y) or 0)
+end
+
 -- the squares already on the canvas, by dream, so a dream that is already down
 -- still gets its connectors instead of being skipped and left unwired
 local function existingElements(shiftingFrame)
 	local found = {}
 	for _, entry in ipairs(canvasElements(shiftingFrame)) do
-		local key = keyOf(entry.placeId, entry.name)
+		local key = spotKey(keyOf(entry.placeId, entry.name), entry.x, entry.y)
 		if not found[key] then
 			found[key] = entry.instance
 		end
@@ -466,12 +472,13 @@ local function dedupe(records)
 	local kept, byKey, resolve, duplicates = {}, {}, {}, {}
 
 	for _, record in ipairs(records) do
-		local keptRecord = byKey[record.key]
+		local key = spotKey(record.key, record.x, record.y)
+		local keptRecord = byKey[key]
 		if keptRecord then
 			resolve[record.index] = keptRecord
 			table.insert(duplicates, record)
 		else
-			byKey[record.key] = record
+			byKey[key] = record
 			resolve[record.index] = record
 			table.insert(kept, record)
 		end
@@ -918,7 +925,7 @@ end
 local function countDuplicateSquares(shiftingFrame)
 	local seen, duplicates = {}, 0
 	for _, entry in ipairs(canvasElements(shiftingFrame)) do
-		local key = keyOf(entry.placeId, entry.name)
+		local key = spotKey(keyOf(entry.placeId, entry.name), entry.x, entry.y)
 		if seen[key] then
 			duplicates = duplicates + 1
 		else
@@ -935,7 +942,7 @@ local function removeDuplicateSquares(shiftingFrame)
 	local keepers, removed, groups = {}, 0, {}
 
 	for _, entry in ipairs(canvasElements(shiftingFrame)) do
-		local key = keyOf(entry.placeId, entry.name)
+		local key = spotKey(keyOf(entry.placeId, entry.name), entry.x, entry.y)
 		local keeper = keepers[key]
 
 		if not keeper then
@@ -1142,7 +1149,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local made = 0
 
 	for _, record in ipairs(kept) do
-		local element = onCanvas[record.key]
+		local element = onCanvas[spotKey(record.key, record.x, record.y)]
 		if element then
 			-- already down, so it keeps its square and only needs its connectors
 			table.insert(duplicates, record)
