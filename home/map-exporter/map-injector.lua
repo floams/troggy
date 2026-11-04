@@ -1012,11 +1012,60 @@ local function saveMapData(inventory, elements)
 	return true
 end
 
+-- the counter the map shows, so a clear can put it back to 0 every time
+local counterObjects = {}
+
+local function setCounterOn(child, count)
+	if not child or not child.Parent then
+		return false
+	end
+
+	if child:IsA("TextLabel") or child:IsA("TextButton") then
+		local text = tostring(child.Text or "")
+		if not text:find("%d") then
+			return false
+		end
+
+		local replaced, changes = text:gsub("%d+", tostring(count), 1)
+		if changes > 0 and replaced ~= text then
+			child.Text = replaced
+			return true
+		end
+		return false
+	end
+
+	local ok = pcall(function()
+		if child:IsA("StringValue") then
+			child.Value = tostring(count)
+		else
+			child.Value = count
+		end
+	end)
+
+	return ok
+end
+
+local function rememberCounter(child)
+	for _, known in ipairs(counterObjects) do
+		if known == child then
+			return
+		end
+	end
+	table.insert(counterObjects, child)
+end
+
 -- the panel up top counts what is mapped, and the tool only refreshes it when it
--- adds a square itself, so the count is nudged after every change we make
-local function updateMappedCount(mapGui, shiftingFrame)
-	local count = #canvasElements(shiftingFrame)
+-- adds a square itself, so the count is nudged after every change we make. a
+-- count can be forced, which is how remove all mapped lands on exactly 0
+local function updateMappedCount(mapGui, shiftingFrame, value)
+	local count = value or #canvasElements(shiftingFrame)
 	local updated = 0
+
+	for _, child in ipairs(counterObjects) do
+		if setCounterOn(child, count) then
+			updated = updated + 1
+		end
+	end
 
 	local roots = { mapGui }
 	local playerGui = getPlayerGui()
@@ -1038,26 +1087,19 @@ local function updateMappedCount(mapGui, shiftingFrame)
 					or lower:find("mapped", 1, true)
 					or lower:find("places", 1, true)
 
-				if isCount and text:find("%d") then
-					local replaced, changes = text:gsub("%d+", tostring(count), 1)
-					if changes > 0 and replaced ~= text then
-						child.Text = replaced
+				if isCount then
+					rememberCounter(child)
+					if setCounterOn(child, count) then
 						updated = updated + 1
 					end
 				end
 			elseif child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("StringValue") then
 				local name = tostring(child.Name):lower()
 				if name:find("count", 1, true) or name:find("mapped", 1, true) or name:find("places", 1, true) then
-					if child:IsA("StringValue") then
-						pcall(function()
-							child.Value = tostring(count)
-						end)
-					else
-						pcall(function()
-							child.Value = count
-						end)
+					rememberCounter(child)
+					if setCounterOn(child, count) then
+						updated = updated + 1
 					end
-					updated = updated + 1
 				end
 			end
 		end
@@ -1503,7 +1545,10 @@ local function actionRemoveAll()
 	local saved, saveProblem = saveMapData(inventory, {})
 
 	local removed = removeAllMapped(shiftingFrame)
-	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+
+	-- an empty map means the counter reads 0, whether or not the count is worked
+	-- out from the canvas at the time
+	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame, 0)
 
 	local message = string.format("removed %d mapped squares", removed)
 	if saved then
@@ -1512,7 +1557,9 @@ local function actionRemoveAll()
 		message = message .. " :: NOT saved :: " .. tostring(saveProblem)
 	end
 	if counterUpdated > 0 then
-		message = message .. string.format(" :: counter %d", mapped)
+		message = message .. " :: counter 0"
+	else
+		message = message .. " :: counter not found"
 	end
 
 	say(message)
