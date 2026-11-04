@@ -15,6 +15,8 @@
 		remove all dupes    duplicates are cleared on their own now; this only shows
 		                    if any are found and runs the same clean again
 		save map            presses the map tool's own save button
+	inject and replace press it too once the squares are down, since squares that
+	are never saved are gone after a rejoin
 
 	usage:
 		1. equip the map tool and open the map once (C) so your data loads
@@ -1540,6 +1542,8 @@ local function actionExport()
 	say("export finished :: the newest file is selected")
 end
 
+local actionSave
+
 local function actionInject()
 	local mapGui, shiftingFrame = canTouchCanvas()
 	if not shiftingFrame then
@@ -1583,6 +1587,9 @@ local function actionInject()
 	end
 
 	say(message)
+	if actionSave then
+		actionSave()
+	end
 	updateDupeButton()
 end
 
@@ -1625,6 +1632,9 @@ local function actionReplace()
 	end
 
 	say(message)
+	if actionSave then
+		actionSave()
+	end
 	updateDupeButton()
 end
 
@@ -1683,7 +1693,7 @@ local function findSaveButton(root)
 	return nil
 end
 
-local function actionSave()
+actionSave = function()
 	local mapGui = findMapGui()
 	if not mapGui then
 		say("no map gui :: equip the map tool and open the map once (C)")
