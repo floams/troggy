@@ -491,43 +491,6 @@ local function cloneRecordAt(record, x, y)
 	return copy
 end
 
--- saved dreams had no place on the map, so they take the first free squares,
--- clear of whatever is already on the canvas
-local function freeSpots(count, existing, stepX, stepY)
-	stepX = stepX or 0.12
-	stepY = stepY or 0.12
-
-	local spots = {}
-	local y = stepY / 2
-
-	local function taken(x, y)
-		for _, item in ipairs(existing) do
-			if math.abs(item.x - x) < stepX * 0.9 and math.abs(item.y - y) < stepY * 0.9 then
-				return true
-			end
-		end
-		for _, spot in ipairs(spots) do
-			if math.abs(spot[1] - x) < stepX * 0.9 and math.abs(spot[2] - y) < stepY * 0.9 then
-				return true
-			end
-		end
-		return false
-	end
-
-	while y < 1 and #spots < count do
-		local x = stepX / 2
-		while x < 1 and #spots < count do
-			if not taken(x, y) then
-				table.insert(spots, { x, y })
-			end
-			x = x + stepX
-		end
-		y = y + stepY
-	end
-
-	return spots
-end
-
 local function cleanChildren(container)
 	for _, child in ipairs(container:GetChildren()) do
 		child:Destroy()
@@ -1045,6 +1008,43 @@ local function setCounterOn(child, count)
 	return ok
 end
 
+-- the counter may not be named after counting at all, so any short label that
+-- already shows the number of mapped squares is treated as the counter too
+local function findCountLabels(mapGui, count)
+	local found = {}
+	if not mapGui or not count or count <= 0 then
+		return found
+	end
+
+	local words = { "mapped", "places", "place", "count", "dream", "saved", "total" }
+	local number = "%f[%d]" .. tostring(count) .. "%f[%D]"
+
+	for _, child in ipairs(mapGui:GetDescendants()) do
+		if child:IsA("TextLabel") or child:IsA("TextButton") then
+			local text = tostring(child.Text or "")
+			local lower = text:lower()
+
+			local looksLikeCounter = text:match("^%s*%d+%s*$") ~= nil
+				or text:match("^%s*%d+%s*/%s*%d+%s*$") ~= nil
+
+			if not looksLikeCounter then
+				for _, word in ipairs(words) do
+					if lower:find(word, 1, true) then
+						looksLikeCounter = true
+						break
+					end
+				end
+			end
+
+			if looksLikeCounter and #text <= 40 and text:find(number) then
+				table.insert(found, child)
+			end
+		end
+	end
+
+	return found
+end
+
 local function rememberCounter(child)
 	for _, known in ipairs(counterObjects) do
 		if known == child then
@@ -1143,42 +1143,10 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 		end
 	end
 
-	-- dreams that were saved but never placed still come across, into the first
-	-- free squares, so an import loses nothing the library had
-	local extras = libraryExtras(records, library)
-	local occupied = {}
-	for _, entry in ipairs(canvasElements(shiftingFrame)) do
-		table.insert(occupied, { x = entry.x, y = entry.y })
-	end
-	for _, record in ipairs(plan) do
-		table.insert(occupied, { x = record.x, y = record.y })
-	end
-
-	-- saved dreams get spaced by the size of a real square, so they do not land
-	-- on top of each other or on top of the squares that are already there
-	local stepX, stepY = 0.12, 0.12
-	if canvasSize then
-		local area = shiftingFrame.AbsoluteSize
-		if area.X > 0 then
-			stepX = math.max(0.12, canvasSize.X.Scale + canvasSize.X.Offset / area.X + 0.02)
-		end
-		if area.Y > 0 then
-			stepY = math.max(0.12, canvasSize.Y.Scale + canvasSize.Y.Offset / area.Y + 0.02)
-		end
-	end
-
-	local spots = freeSpots(#extras, occupied, stepX, stepY)
-	local extrasPlaced = 0
-
-	for index, entry in ipairs(extras) do
-		local spot = spots[index]
-		if spot then
-			local copy = cloneRecordAt(entry, spot[1], spot[2])
-			copy.exitIndices = {}
-			table.insert(plan, copy)
-			extrasPlaced = extrasPlaced + 1
-		end
-	end
+	-- dreams that were saved but never placed belong in the library, which is the
+	-- sidebar, so they are carried in the inventory without being dropped onto
+	-- the map as loose squares
+	local libraryOnly = #libraryExtras(records, library)
 
 	-- the map tool's own save takes the whole map at once, which is what carries
 	-- the names, the connection lines and the place count
@@ -1222,7 +1190,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 		made = made,
 		links = links,
 		skipped = #duplicates,
-		extras = extrasPlaced,
+		libraryOnly = libraryOnly,
 		existing = existingCount,
 		templateMissing = fallback == nil,
 		saved = saved,
@@ -1477,8 +1445,8 @@ local function describeInjection(result, replacing)
 	table.insert(parts, string.format("placed %d squares", result.made))
 	table.insert(parts, string.format("%d connections", result.links))
 
-	if result.extras > 0 then
-		table.insert(parts, string.format("%d saved dreams", result.extras))
+	if result.libraryOnly > 0 then
+		table.insert(parts, string.format("%d saved dreams kept in the library", result.libraryOnly))
 	end
 	if result.skipped > 0 then
 		table.insert(parts, string.format("skipped %d dupes", result.skipped))
@@ -1539,12 +1507,23 @@ local function actionRemoveAll()
 		return
 	end
 
+	-- catch the labels showing the number of squares before they go, so the count
+	-- can be put back to 0 even when its label is not named after counting
+	local showsCount = findCountLabels(mapGui, #canvasElements(shiftingFrame))
+
 	-- the library is kept, only the placed squares go, and the map tool's save is
 	-- told the same thing so the empty map is what loads next time
 	local inventory = buildInventory(collectCanvasRecords(shiftingFrame), state.library)
 	local saved, saveProblem = saveMapData(inventory, {})
 
 	local removed = removeAllMapped(shiftingFrame)
+
+	local zeroed = 0
+	for _, child in ipairs(showsCount) do
+		if setCounterOn(child, 0) then
+			zeroed = zeroed + 1
+		end
+	end
 
 	-- an empty map means the counter reads 0, whether or not the count is worked
 	-- out from the canvas at the time
@@ -1556,7 +1535,7 @@ local function actionRemoveAll()
 	else
 		message = message .. " :: NOT saved :: " .. tostring(saveProblem)
 	end
-	if counterUpdated > 0 then
+	if zeroed + counterUpdated > 0 then
 		message = message .. " :: counter 0"
 	else
 		message = message .. " :: counter not found"
