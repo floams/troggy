@@ -24,6 +24,7 @@
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local EXPORT_FOLDER = "home map exports"
@@ -646,8 +647,19 @@ local function createElement(record, shiftingFrame, templates, fallback, canvasS
 	else
 		element.Position = UDim2.fromScale(record.x, record.y)
 	end
-	if canvasSize then
-		element.Size = canvasSize
+	-- the map's own squares keep their size when you zoom, which means they are
+	-- measured in pixels, not in a share of the canvas. take the size of a square
+	-- already on the map, and otherwise the chip's own pixel size, so an imported
+	-- square does not grow and shrink with the zoom
+	local size = canvasSize
+	if not size then
+		local pixels = template.AbsoluteSize
+		if pixels and pixels.X > 0 and pixels.Y > 0 then
+			size = UDim2.fromOffset(pixels.X, pixels.Y)
+		end
+	end
+	if size then
+		element.Size = size
 	end
 
 	local exits = ensureChild(element, "Exits", "Folder")
@@ -737,7 +749,87 @@ local function linkEntrance(target, source, template)
 	return true
 end
 
+-- the tool lays out the geometry of its own connection lines every frame, so a
+-- cloned line never draws. these lines are drawn here instead and re-measured on
+-- every frame, which keeps them on the squares as the map pans and zooms
+local linkLayer = nil
+local linkUpdate = nil
+
+local function clearLinkLayer()
+	if linkUpdate then
+		linkUpdate:Disconnect()
+		linkUpdate = nil
+	end
+
+	if linkLayer and linkLayer.Parent then
+		linkLayer:Destroy()
+	end
+
+	linkLayer = nil
+end
+
+local function drawLinks(shiftingFrame, drawn)
+	clearLinkLayer()
+
+	if #drawn == 0 then
+		return
+	end
+
+	local layer = Instance.new("Frame")
+	layer.Name = "MapInjectorLinks"
+	layer.BackgroundTransparency = 1
+	layer.BorderSizePixel = 0
+	layer.Size = UDim2.fromScale(1, 1)
+	layer.ZIndex = 0
+	layer.Parent = shiftingFrame
+	linkLayer = layer
+
+	local bars = {}
+	for _, link in ipairs(drawn) do
+		local bar = Instance.new("Frame")
+		bar.Name = "link"
+		bar.BackgroundColor3 = Color3.fromRGB(203, 166, 247)
+		bar.BorderSizePixel = 0
+		bar.AnchorPoint = Vector2.new(0.5, 0.5)
+		bar.ZIndex = 0
+		bar.Parent = layer
+		table.insert(bars, { bar = bar, from = link[1], to = link[2] })
+	end
+
+	local function update()
+		if not layer.Parent then
+			return
+		end
+
+		local origin = shiftingFrame.AbsolutePosition
+		for _, item in ipairs(bars) do
+			local from = item.from
+			local to = item.to
+
+			if from and to and from.Parent and to.Parent then
+				local a = from.AbsolutePosition + from.AbsoluteSize / 2
+				local b = to.AbsolutePosition + to.AbsoluteSize / 2
+				local dx = b.X - a.X
+				local dy = b.Y - a.Y
+				local length = math.sqrt(dx * dx + dy * dy)
+
+				item.bar.Position = UDim2.fromOffset((a.X + b.X) / 2 - origin.X, (a.Y + b.Y) / 2 - origin.Y)
+				item.bar.Size = UDim2.fromOffset(math.max(1, length), 4)
+				item.bar.Rotation = math.deg(math.atan(dy, dx))
+				item.bar.Visible = true
+			else
+				item.bar.Visible = false
+			end
+		end
+	end
+
+	update()
+	linkUpdate = RunService.RenderStepped:Connect(update)
+end
+
 local function removeAllMapped(shiftingFrame)
+	clearLinkLayer()
+
 	local removed = 0
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
 		if isElement(child) then
@@ -978,6 +1070,8 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	end
 
 	local links = 0
+	local drawn = {}
+
 	for _, record in ipairs(kept) do
 		local source = placed[record]
 		if source then
@@ -988,11 +1082,14 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 					if linkExit(source, target, exitTemplate, links + 1) then
 						linkEntrance(target, source, entranceTemplate)
 						links = links + 1
+						table.insert(drawn, { source, target })
 					end
 				end
 			end
 		end
 	end
+
+	drawLinks(shiftingFrame, drawn)
 
 	local extrasMade = 0
 
