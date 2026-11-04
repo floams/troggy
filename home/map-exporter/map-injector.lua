@@ -830,7 +830,7 @@ local function normalizeElement(element)
 	end
 end
 
-local function createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName, byImage)
+local function createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName, byImage, existing)
 	local key = record.key
 	local name = tostring(record.name or "")
 	local lower = name:lower()
@@ -849,11 +849,13 @@ local function createElement(record, shiftingFrame, templates, fallback, markerT
 	end
 
 	local template = world or templates[key] or fallback
-	if not template then
+	if not template and not existing then
 		return nil, "the map library is empty, open the map once so your dreams load"
 	end
 
-	local element = template:Clone()
+	-- a square the tool placed itself is the kind it knows how to save, so that one
+	-- is finished off where it is instead of being swapped for a copy
+	local element = existing or template:Clone()
 	element.Name = world and world.Name or (record.placeId == "CUSTOM" and "CUSTOM" or tostring(record.placeId))
 	element.Visible = true
 
@@ -916,7 +918,7 @@ local function createElement(record, shiftingFrame, templates, fallback, markerT
 			label.Text = shown
 		end
 	else
-		local templateName = tostring(template.Name)
+		local templateName = tostring(template and template.Name or "")
 		for _, child in ipairs(element:GetDescendants()) do
 			if child:IsA("TextLabel") or child:IsA("TextButton") then
 				local text = tostring(child.Text or "")
@@ -1212,6 +1214,84 @@ local function updateMappedCount(mapGui, shiftingFrame, value)
 	return count, updated
 end
 
+-- the tool's own library chips, so a square can be placed by the tool itself: it
+-- keeps its own bookkeeping on a square it put down, which is what a save keeps
+local function findChips(mapGui)
+	local byKey, byImage = {}, {}
+
+	local inventory = mapGui and deepFind(mapGui, "InventoryFrame")
+	if not inventory then
+		return byKey, byImage
+	end
+
+	for _, child in ipairs(inventory:GetDescendants()) do
+		if child:IsA("GuiButton") and child:FindFirstChild("ImageClipper") then
+			local key = templateKey(child)
+			byKey[key] = byKey[key] or child
+
+			local clipper = child:FindFirstChild("ImageClipper")
+			local thumbnail = clipper and clipper:FindFirstChild("Thumbnail")
+			local image = thumbnail and tostring(thumbnail.Image or "") or ""
+			if image ~= "" then
+				byImage[image] = byImage[image] or child
+			end
+		end
+	end
+
+	return byKey, byImage
+end
+
+local function chipFor(record, byKey, byImage)
+	local chip = byKey[record.key]
+	if chip then
+		return chip
+	end
+
+	local image = tostring(record.image or "")
+	if image ~= "" then
+		return byImage[image]
+	end
+
+	return nil
+end
+
+-- press a library chip the way a player would, then take the square the tool puts
+-- down instead of making a copy of it
+local function placeWithTool(record, shiftingFrame, byKey, byImage)
+	if type(firesignal) ~= "function" then
+		return nil
+	end
+
+	local chip = chipFor(record, byKey, byImage)
+	if not chip or not chip:IsA("GuiButton") then
+		return nil
+	end
+
+	local before = {}
+	for _, child in ipairs(shiftingFrame:GetChildren()) do
+		if isElement(child) then
+			before[child] = true
+		end
+	end
+
+	if not pcall(firesignal, chip.MouseButton1Click) then
+		return nil
+	end
+
+	-- the tool drops its square on the next frame or two
+	for _ = 1, 8 do
+		RunService.Heartbeat:Wait()
+
+		for _, child in ipairs(shiftingFrame:GetChildren()) do
+			if isElement(child) and not before[child] then
+				return child
+			end
+		end
+	end
+
+	return nil
+end
+
 local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local kept, duplicates, resolve = dedupe(records)
 
@@ -1223,6 +1303,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local templates, fallback, markerTemplates, names, byName, byImage = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = lineTemplate(mapGui, shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
+	local chipsByKey, chipsByImage = findChips(mapGui)
 
 	if not fallback then
 		return 0, 0, #duplicates, removed, 0, "the map library is empty, open the map once so your dreams load"
@@ -1230,6 +1311,9 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 
 	local placed = {}
 	local made = 0
+	local native = 0
+	local chipTries, chipWins = 0, 0
+	local toolPlaces = true
 
 	for _, record in ipairs(kept) do
 		local element = onCanvas[spotKey(record.key, record.x, record.y)]
@@ -1238,7 +1322,31 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 			table.insert(duplicates, record)
 			placed[record] = element
 		else
-			local created = createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName, byImage)
+			local theirs = nil
+			if toolPlaces then
+				theirs = placeWithTool(record, shiftingFrame, chipsByKey, chipsByImage)
+				chipTries = chipTries + 1
+
+				if theirs then
+					chipWins = chipWins + 1
+					native = native + 1
+				elseif chipTries >= 3 then
+					-- pressing a chip does not place here, so stop waiting on it
+					toolPlaces = false
+				end
+			end
+
+			local created = createElement(
+				record,
+				shiftingFrame,
+				templates,
+				fallback,
+				markerTemplates,
+				names,
+				byName,
+				byImage,
+				theirs
+			)
 			if created then
 				placed[record] = created
 				made = made + 1
@@ -1266,7 +1374,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 
 	local extrasMade = 0
 
-	return made, links, #duplicates, removed, extrasMade
+	return made, links, #duplicates, removed, extrasMade, nil, native
 end
 
 local function shortName(path)
@@ -1556,7 +1664,7 @@ local function actionInject()
 	end
 
 	local existing = #canvasElements(shiftingFrame)
-	local made, links, skipped, _, extrasMade, problem =
+	local made, links, skipped, _, extrasMade, problem, native =
 		inject(shiftingFrame, mapGui, state.records, state.library, false)
 
 	if problem then
@@ -1568,6 +1676,9 @@ local function actionInject()
 	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
 
 	local message = string.format("placed %d squares :: %d connections", made, links)
+	if native and native > 0 then
+		message = message .. string.format(" :: %d placed by the tool", native)
+	end
 	if extrasMade > 0 then
 		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
 	end
@@ -1604,7 +1715,7 @@ local function actionReplace()
 		return
 	end
 
-	local made, links, skipped, removed, extrasMade, problem =
+	local made, links, skipped, removed, extrasMade, problem, native =
 		inject(shiftingFrame, mapGui, state.records, state.library, true)
 
 	if problem then
@@ -1616,6 +1727,9 @@ local function actionReplace()
 	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
 
 	local message = string.format("removed %d squares :: placed %d :: %d connections", removed, made, links)
+	if native and native > 0 then
+		message = message .. string.format(" :: %d placed by the tool", native)
+	end
 	if extrasMade > 0 then
 		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
 	end
