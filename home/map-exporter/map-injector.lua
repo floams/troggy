@@ -160,9 +160,23 @@ local function keyOf(placeId, name)
 
 	local text = tostring(placeId or "")
 	if text == "CUSTOM" then
-		return "CUSTOM:" .. tostring(name or "")
+		-- two copies of a custom dream can differ only in spacing or case, and
+		-- those are still the same dream
+		local clean = tostring(name or ""):lower()
+		clean = clean:gsub("^%s+", "")
+		clean = clean:gsub("%s+$", "")
+		return "CUSTOM:" .. clean
 	end
 	return text
+end
+
+-- the dreams the map already holds, so an export cannot be laid down twice
+local function existingKeys(shiftingFrame)
+	local seen = {}
+	for _, entry in ipairs(canvasElements(shiftingFrame)) do
+		seen[keyOf(entry.placeId, entry.name)] = true
+	end
+	return seen
 end
 
 local function splitList(text)
@@ -1057,6 +1071,19 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local exitTemplate = firstExitLine(shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
 
+	-- a square the map already holds counts as a duplicate too, so injecting the
+	-- same export a second time cannot double the map
+	local onCanvas = clearFirst and {} or existingKeys(shiftingFrame)
+	local wanted = {}
+
+	for _, record in ipairs(kept) do
+		if onCanvas[record.key] then
+			table.insert(duplicates, record)
+		else
+			table.insert(wanted, record)
+		end
+	end
+
 	local removed = clearFirst and removeAllMapped(shiftingFrame) or 0
 	if not fallback then
 		return 0, 0, #duplicates, removed, 0, "the map library is empty, open the map once so your dreams load"
@@ -1065,7 +1092,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local placed = {}
 	local made = 0
 
-	for _, record in ipairs(kept) do
+	for _, record in ipairs(wanted) do
 		local element = createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
 		if element then
 			placed[record] = element
@@ -1076,7 +1103,7 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local links = 0
 	local drawn = {}
 
-	for _, record in ipairs(kept) do
+	for _, record in ipairs(wanted) do
 		local source = placed[record]
 		if source then
 			for _, reference in ipairs(record.exits) do
