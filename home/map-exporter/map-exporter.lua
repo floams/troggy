@@ -222,6 +222,11 @@ local function readElements(shiftingFrame, library)
 
 			local known = library[placeId]
 			if known then
+				-- the map's own label can be blank, or just say CUSTOM, even for a
+				-- real place, so the library's world name fills it in
+				if placeId ~= "CUSTOM" and (record.name == "" or tostring(record.name):lower() == "custom") then
+					record.name = known.name
+				end
 				if record.name == "" then
 					record.name = known.name
 				end
@@ -237,17 +242,25 @@ local function readElements(shiftingFrame, library)
 				end
 			end
 
+			-- two lines pointing at the same square are one connection, or the
+			-- import would draw two beams on top of each other
 			local outgoing = {}
+			local seenExit = {}
 			for _, line in ipairs(exits:GetChildren()) do
 				local exitValue = line:FindFirstChild("Exit")
 				if exitValue and exitValue:IsA("ObjectValue") and exitValue.Value then
-					table.insert(outgoing, exitValue.Value)
+					if not seenExit[exitValue.Value] then
+						seenExit[exitValue.Value] = true
+						table.insert(outgoing, exitValue.Value)
+					end
 				end
 			end
 
 			local incoming = {}
+			local seenEntrance = {}
 			for _, link in ipairs(entrances:GetChildren()) do
-				if link:IsA("ObjectValue") and link.Value then
+				if link:IsA("ObjectValue") and link.Value and not seenEntrance[link.Value] then
+					seenEntrance[link.Value] = true
 					table.insert(incoming, link.Value)
 				end
 			end

@@ -170,13 +170,17 @@ local function keyOf(placeId, name)
 	return text
 end
 
--- the dreams the map already holds, so an export cannot be laid down twice
-local function existingKeys(shiftingFrame)
-	local seen = {}
+-- the squares already on the canvas, by dream, so a dream that is already down
+-- still gets its connectors instead of being skipped and left unwired
+local function existingElements(shiftingFrame)
+	local found = {}
 	for _, entry in ipairs(canvasElements(shiftingFrame)) do
-		seen[keyOf(entry.placeId, entry.name)] = true
+		local key = keyOf(entry.placeId, entry.name)
+		if not found[key] then
+			found[key] = entry.instance
+		end
 	end
-	return seen
+	return found
 end
 
 local function splitList(text)
@@ -548,20 +552,37 @@ end
 -- clipper, label, marker holder and exits lists the tool expects
 local function collectTemplates(shiftingFrame, mapGui)
 	local templates, fallback = {}, nil
+	local names, byName = {}, {}
 	local markerTemplates = {}
+
+	local function remember(child)
+		local key = templateKey(child)
+		templates[key] = templates[key] or child
+		fallback = fallback or child
+
+		local label = child:FindFirstChild("DreamLabel")
+		local text = label and tostring(label.Text or "") or ""
+		if text ~= "" and not names[key] then
+			names[key] = text
+		end
+
+		-- a custom square is named after a world, so a world that goes by that name
+		-- can stand in for it instead of leaving another nameless CUSTOM behind
+		if tonumber(child.Name) and text ~= "" and not byName[text:lower()] then
+			byName[text:lower()] = child
+		end
+
+		local holder = child:FindFirstChild("MarkerHolder")
+		if holder then
+			for _, marker in ipairs(holder:GetChildren()) do
+				markerTemplates[marker.Name] = markerTemplates[marker.Name] or marker
+			end
+		end
+	end
 
 	for _, child in ipairs(shiftingFrame:GetChildren()) do
 		if isElement(child) then
-			local key = templateKey(child)
-			templates[key] = templates[key] or child
-			fallback = fallback or child
-
-			local holder = child:FindFirstChild("MarkerHolder")
-			if holder then
-				for _, marker in ipairs(holder:GetChildren()) do
-					markerTemplates[marker.Name] = markerTemplates[marker.Name] or marker
-				end
-			end
+			remember(child)
 		end
 	end
 
@@ -569,21 +590,12 @@ local function collectTemplates(shiftingFrame, mapGui)
 	if inventory then
 		for _, child in ipairs(inventory:GetDescendants()) do
 			if child:IsA("GuiObject") and child:FindFirstChild("ImageClipper") then
-				local key = templateKey(child)
-				templates[key] = templates[key] or child
-				fallback = fallback or child
-
-				local holder = child:FindFirstChild("MarkerHolder")
-				if holder then
-					for _, marker in ipairs(holder:GetChildren()) do
-						markerTemplates[marker.Name] = markerTemplates[marker.Name] or marker
-					end
-				end
+				remember(child)
 			end
 		end
 	end
 
-	return templates, fallback, markerTemplates
+	return templates, fallback, markerTemplates, names, byName
 end
 
 local function firstExitLine(shiftingFrame)
@@ -749,14 +761,25 @@ local function normalizeElement(element)
 	end
 end
 
-local function createElement(record, shiftingFrame, templates, fallback, markerTemplates)
-	local template = templates[record.key] or fallback
+local function createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName)
+	local key = record.key
+	local name = tostring(record.name or "")
+	local lower = name:lower()
+
+	-- a custom square that carries a world's name becomes that world, so it brings
+	-- the real place id, label and picture with it
+	local world = nil
+	if tostring(record.placeId) == "CUSTOM" and lower ~= "" then
+		world = byName[lower]
+	end
+
+	local template = world or templates[key] or fallback
 	if not template then
 		return nil, "the map library is empty, open the map once so your dreams load"
 	end
 
 	local element = template:Clone()
-	element.Name = record.placeId == "CUSTOM" and "CUSTOM" or tostring(record.placeId)
+	element.Name = world and world.Name or (record.placeId == "CUSTOM" and "CUSTOM" or tostring(record.placeId))
 	element.Visible = true
 
 	-- the saved spot is a fraction of the canvas, which is exactly how the map
@@ -776,17 +799,30 @@ local function createElement(record, shiftingFrame, templates, fallback, markerT
 			border.Color = Color3.new(record.color[1], record.color[2], record.color[3])
 		end
 
+		-- a real world already has its own picture, so only a custom square's own
+		-- image is allowed to replace it
 		local thumbnail = clipper:FindFirstChild("Thumbnail")
-		if thumbnail and record.image ~= "" then
+		if thumbnail and not world and record.image ~= "" then
 			pcall(function()
 				thumbnail.Image = record.image
 			end)
 		end
 	end
 
+	local shown = name
+	if shown == "" or lower == "custom" then
+		local worldKey = world and templateKey(world) or key
+		shown = names[worldKey] or ""
+		if shown == "" and type(record.placeId) == "number" then
+			shown = tostring(record.placeId)
+		end
+	end
+
 	local label = element:FindFirstChild("DreamLabel")
 	if label and (label:IsA("TextLabel") or label:IsA("TextButton")) then
-		label.Text = record.name
+		if shown ~= "" then
+			label.Text = shown
+		end
 	else
 		-- a library chip can name its label differently, so any label still showing
 		-- the chip's own name gets the dream's name instead
@@ -794,8 +830,8 @@ local function createElement(record, shiftingFrame, templates, fallback, markerT
 		for _, child in ipairs(element:GetDescendants()) do
 			if child:IsA("TextLabel") or child:IsA("TextButton") then
 				local text = tostring(child.Text or "")
-				if text == "CUSTOM" or text == templateName then
-					child.Text = record.name
+				if shown ~= "" and (text == "CUSTOM" or text == templateName) then
+					child.Text = shown
 				end
 			end
 		end
@@ -816,6 +852,14 @@ local function linkExit(source, target, template, shiftingFrame)
 	local exits = source:FindFirstChild("Exits")
 	if not exits then
 		return false
+	end
+
+	-- one line per connection, so a second inject cannot stack beams on beams
+	for _, existing in ipairs(exits:GetChildren()) do
+		local existingValue = existing:FindFirstChild("Exit")
+		if existingValue and existingValue.Value == target then
+			return false
+		end
 	end
 
 	local line = template and template:Clone() or Instance.new("Frame")
@@ -1080,24 +1124,16 @@ end
 
 local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local kept, duplicates, resolve = dedupe(records)
-	local templates, fallback, markerTemplates = collectTemplates(shiftingFrame, mapGui)
+
+	-- the map has to be cleared before anything is cloned from it, or the clones
+	-- come from squares that no longer exist
+	local removed = clearFirst and removeAllMapped(shiftingFrame) or 0
+	local onCanvas = clearFirst and {} or existingElements(shiftingFrame)
+
+	local templates, fallback, markerTemplates, names, byName = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = lineTemplate(mapGui, shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
 
-	-- a square the map already holds counts as a duplicate too, so injecting the
-	-- same export a second time cannot double the map
-	local onCanvas = clearFirst and {} or existingKeys(shiftingFrame)
-	local wanted = {}
-
-	for _, record in ipairs(kept) do
-		if onCanvas[record.key] then
-			table.insert(duplicates, record)
-		else
-			table.insert(wanted, record)
-		end
-	end
-
-	local removed = clearFirst and removeAllMapped(shiftingFrame) or 0
 	if not fallback then
 		return 0, 0, #duplicates, removed, 0, "the map library is empty, open the map once so your dreams load"
 	end
@@ -1105,17 +1141,24 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local placed = {}
 	local made = 0
 
-	for _, record in ipairs(wanted) do
-		local element = createElement(record, shiftingFrame, templates, fallback, markerTemplates)
+	for _, record in ipairs(kept) do
+		local element = onCanvas[record.key]
 		if element then
+			-- already down, so it keeps its square and only needs its connectors
+			table.insert(duplicates, record)
 			placed[record] = element
-			made = made + 1
+		else
+			local created = createElement(record, shiftingFrame, templates, fallback, markerTemplates, names, byName)
+			if created then
+				placed[record] = created
+				made = made + 1
+			end
 		end
 	end
 
 	local links = 0
 
-	for _, record in ipairs(wanted) do
+	for _, record in ipairs(kept) do
 		local source = placed[record]
 		if source then
 			for _, reference in ipairs(record.exits) do
@@ -1130,7 +1173,6 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 			end
 		end
 	end
-
 
 	local extrasMade = 0
 
