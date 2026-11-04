@@ -254,6 +254,60 @@ local function show(value, depth)
 	return tostring(value)
 end
 
+-- anything long the map keeps as a value is usually its own saved data
+add("")
+add("== long values the map keeps around ==")
+do
+	local foundValues = 0
+	for _, inst in ipairs(mapGui and mapGui:GetDescendants() or {}) do
+		if inst:IsA("StringValue") and #tostring(inst.Value or "") > 40 then
+			local value = tostring(inst.Value)
+			foundValues = foundValues + 1
+			if foundValues <= 12 then
+				add(inst:GetFullName() .. " (" .. #value .. " chars) " .. value:sub(1, 200))
+			end
+		end
+	end
+	add("values found: " .. tostring(foundValues))
+end
+
+-- the table the save writes from, when it can be reached: a custom square has no
+-- place id, so this is what tells us how the map remembers one
+add("")
+add("== tables in memory that look like map data ==")
+do
+	local scanned, reported = 0, 0
+
+	if type(getgc) == "function" then
+		local ok, objects = pcall(getgc, true)
+		if ok and type(objects) == "table" then
+			for _, object in ipairs(objects) do
+				if type(object) == "table" then
+					scanned = scanned + 1
+					local sample = object[1]
+					if type(sample) == "table" and (sample.ScalePosition or sample.PlaceId or sample.placeId) then
+						reported = reported + 1
+						if reported <= 5 then
+							add("")
+							add("-- table " .. reported .. " with " .. tostring(#object) .. " entries")
+							add(show(sample, 0))
+							if object[2] then
+								add(show(object[2], 0))
+							end
+						end
+					end
+				end
+			end
+		else
+			add("getgc failed")
+		end
+	else
+		add("this executor has no getgc")
+	end
+
+	add("scanned " .. tostring(scanned) .. " tables :: " .. tostring(reported) .. " looked like map data")
+end
+
 local function record(label, args, from)
 	shown = shown + 1
 	add("")
