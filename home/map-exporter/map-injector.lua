@@ -12,8 +12,8 @@
 		inject              adds the chosen export to the open map
 		replace map         clears every mapped square, then adds the export
 		remove all mapped   removes every square from the canvas
-		remove all dupes    only shows when the export or the canvas has the same
-		                    dream twice; keeps the first copy and rewires the rest
+		remove all dupes    duplicates are cleared on their own now; this only shows
+		                    if any are found and runs the same clean again
 		save map            presses the map tool's own save button
 
 	usage:
@@ -1233,6 +1233,33 @@ local function updateDupeButton()
 	ui.dupe.Visible = state.duplicateCount > 0 or canvasDupes > 0
 end
 
+-- duplicates are never left lying around: wherever the canvas is touched, one
+-- copy of each dream stays, the spare copies' exits move onto it, every entrance
+-- is repointed, and the spares are destroyed
+local function clearDuplicates(mapGui, shiftingFrame, quiet)
+	local removed, groups = removeDuplicateSquares(shiftingFrame)
+	if removed == 0 then
+		if not quiet then
+			say("no duplicate squares on the map")
+		end
+		return 0
+	end
+
+	updateMappedCount(mapGui, shiftingFrame)
+
+	if not quiet then
+		local parts = {}
+		for key, count in pairs(groups) do
+			table.insert(parts, string.format("%s x%d", key, count + 1))
+		end
+		table.sort(parts)
+
+		say(string.format("removed %d duplicate squares :: kept one of %s", removed, table.concat(parts, " :: ")))
+	end
+
+	return removed
+end
+
 local function loadSelected()
 	state.records = nil
 	state.library = {}
@@ -1381,6 +1408,7 @@ local function actionInject()
 		return
 	end
 
+	local dupes = clearDuplicates(mapGui, shiftingFrame, true)
 	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
 
 	local message = string.format("placed %d squares :: %d connections", made, links)
@@ -1389,6 +1417,9 @@ local function actionInject()
 	end
 	if skipped > 0 then
 		message = message .. string.format(" :: skipped %d dupes", skipped)
+	end
+	if dupes > 0 then
+		message = message .. string.format(" :: removed %d dupes", dupes)
 	end
 	if counterUpdated > 0 then
 		message = message .. string.format(" :: counter shows %d", mapped)
@@ -1422,6 +1453,7 @@ local function actionReplace()
 		return
 	end
 
+	local dupes = clearDuplicates(mapGui, shiftingFrame, true)
 	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
 
 	local message = string.format("removed %d squares :: placed %d :: %d connections", removed, made, links)
@@ -1430,6 +1462,9 @@ local function actionReplace()
 	end
 	if skipped > 0 then
 		message = message .. string.format(" :: skipped %d dupes", skipped)
+	end
+	if dupes > 0 then
+		message = message .. string.format(" :: removed %d dupes", dupes)
 	end
 	if counterUpdated > 0 then
 		message = message .. string.format(" :: counter shows %d", mapped)
@@ -1479,21 +1514,7 @@ local function actionRemoveDupes()
 		return
 	end
 
-	local removed, groups = removeDuplicateSquares(shiftingFrame)
-	if removed == 0 then
-		say("no duplicate squares on the map")
-		return
-	end
-
-	updateMappedCount(mapGui, shiftingFrame)
-
-	local parts = {}
-	for key, count in pairs(groups) do
-		table.insert(parts, string.format("%s x%d", key, count + 1))
-	end
-	table.sort(parts)
-
-	say(string.format("removed %d duplicate squares :: kept one of %s", removed, table.concat(parts, " :: ")))
+	clearDuplicates(mapGui, shiftingFrame, false)
 	updateDupeButton()
 end
 
@@ -1694,4 +1715,28 @@ if not buildGui() then
 end
 
 refreshFiles()
+
+-- the map can already be holding two copies of every dream, so it is cleaned up
+-- front, before any export is even picked
+local cleaned = clearDuplicates(mapGui, shiftingFrame, true)
+if cleaned > 0 then
+	say(string.format("cleaned %d duplicate squares already on the map", cleaned))
+	updateDupeButton()
+end
+
+-- the tool may still be laying its squares out, so look again once it settles
+pcall(function()
+	task.wait(2)
+
+	local gui = findMapGui()
+	local frame = gui and deepFind(gui, "ShiftingFrame")
+	if frame then
+		local late = clearDuplicates(gui, frame, true)
+		if late > 0 then
+			say(string.format("cleaned %d more duplicate squares", late))
+			updateDupeButton()
+		end
+	end
+end)
+
 print("[map-injector] ready :: pick an export and inject it, or replace the map with it")
