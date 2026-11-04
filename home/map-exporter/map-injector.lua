@@ -179,6 +179,38 @@ local function spotKey(key, x, y)
 	return string.format("%s@%.3f,%.3f", tostring(key or ""), tonumber(x) or 0, tonumber(y) or 0)
 end
 
+-- the word CUSTOM is what an unnamed square says, not a name
+local function hasName(record)
+	local text = tostring(record and record.name or "")
+	return text ~= "" and text:lower() ~= "custom"
+end
+
+-- the readable part of an export repeats every name next to its number, so a
+-- name can still be found when the raw line lost it
+local function scanListedNames(text)
+	local found = {}
+	for line in (tostring(text or "") .. "\n"):gmatch("([^\n]*)\n") do
+		local index, _tag, name = line:match('^#(%d+)%s+%[([^%]]*)%]%s+"(.-)"')
+		if index and name and name ~= "" then
+			found[tonumber(index)] = name
+		end
+	end
+	return found
+end
+
+local function applyListedNames(records, text)
+	local listed = scanListedNames(text)
+	for _, record in ipairs(records or {}) do
+		if not hasName(record) then
+			local name = listed[record.index]
+			if name and name:lower() ~= "custom" then
+				record.name = name
+			end
+		end
+	end
+	return records
+end
+
 -- the squares already on the canvas, by dream, so a dream that is already down
 -- still gets its connectors instead of being skipped and left unwired
 local function existingElements(shiftingFrame)
@@ -434,7 +466,7 @@ local function parseText(text)
 					end
 				end
 				if #records > 0 then
-					return records, library
+					return applyListedNames(records, raw), library
 				end
 			end
 		end
@@ -457,13 +489,13 @@ local function parseText(text)
 		end
 
 		if #records > 0 then
-			return records, library
+			return applyListedNames(records, raw), library
 		end
 	end
 
 	local legacy = scanLegacy(raw)
 	if #legacy > 0 then
-		return legacy, library
+		return applyListedNames(legacy, raw), library
 	end
 
 	return nil, library
@@ -477,9 +509,25 @@ local function dedupe(records)
 	for _, record in ipairs(records) do
 		local key = spotKey(record.key, record.x, record.y)
 		local keptRecord = byKey[key]
+
 		if keptRecord then
-			resolve[record.index] = keptRecord
-			table.insert(duplicates, record)
+			-- a square you named beats an unnamed leftover in the same spot, so the
+			-- good name is the one that survives and every connection follows it
+			if not hasName(keptRecord) and hasName(record) then
+				for position, other in ipairs(kept) do
+					if other == keptRecord then
+						kept[position] = record
+						break
+					end
+				end
+
+				resolve[keptRecord.index] = record
+				byKey[key] = record
+				table.insert(duplicates, keptRecord)
+			else
+				resolve[record.index] = keptRecord
+				table.insert(duplicates, record)
+			end
 		else
 			byKey[key] = record
 			resolve[record.index] = record
@@ -1270,7 +1318,7 @@ local function readExport(path)
 end
 
 local ui = {}
-local state = { files = {}, path = nil, records = nil, library = {}, extras = 0, duplicateCount = 0 }
+local state = { files = {}, path = nil, records = nil, library = {}, extras = 0, duplicateCount = 0, nameless = 0 }
 
 local function say(message)
 	print("[map-injector] " .. message)
@@ -1305,6 +1353,10 @@ local function updateStatus()
 
 		if state.extras > 0 then
 			text = text .. string.format(" :: %d saved not placed", state.extras)
+		end
+
+		if state.nameless > 0 then
+			text = text .. string.format(" :: %d unnamed", state.nameless)
 		end
 
 		ui.status.Text = text
@@ -1374,6 +1426,13 @@ local function loadSelected()
 	state.records = records
 	state.library = library or {}
 	state.extras = #libraryExtras(records, state.library)
+
+	state.nameless = 0
+	for _, record in ipairs(records) do
+		if not hasName(record) then
+			state.nameless = state.nameless + 1
+		end
+	end
 	local _, duplicates = dedupe(records)
 	state.duplicateCount = #duplicates
 	updateStatus()
