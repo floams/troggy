@@ -4,9 +4,8 @@
 	so you can carry a mapped world onto a new map or swap out the one you have.
 	it never invents its own squares: every element is cloned from the map tool's
 	own library (or from a square already on the canvas), given the place id,
-	position, color, note and markers from the export, then wired back up with		the tool's own exit lines. the whole map is then handed to the map tool's own
-	save (MapTool.DataRemoteEvent, "Save Map Data"), which is what makes the names,
-	the connection lines and the mapped count come back when the map loads.
+	position, color, note and markers from the export, then wired back up with the
+	tool's own exit lines. the tool's save button writes it like you placed it.
 
 	buttons:
 		export now          runs map-exporter on this map and saves a fresh export
@@ -25,7 +24,6 @@
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
 local EXPORT_FOLDER = "home map exports"
@@ -824,157 +822,6 @@ local function removeDuplicateSquares(shiftingFrame)
 	return removed, groups
 end
 
--- reads the squares as they sit on the canvas, in the order the map saves them,
--- so a save or a dupe sweep sends the map back exactly as it looks now
-local function collectCanvasRecords(shiftingFrame)
-	local entries = canvasElements(shiftingFrame)
-	local records, indexOf = {}, {}
-
-	for index, entry in ipairs(entries) do
-		local element = entry.instance
-		local clipper = element:FindFirstChild("ImageClipper")
-		local border = clipper and clipper:FindFirstChild("ImageBorder")
-		local thumbnail = clipper and clipper:FindFirstChild("Thumbnail")
-		local noteValue = element:FindFirstChild("NoteText")
-		local label = element:FindFirstChild("DreamLabel")
-
-		local markers = {}
-		local holder = element:FindFirstChild("MarkerHolder")
-		if holder then
-			for _, marker in ipairs(holder:GetChildren()) do
-				for id, markerName in pairs(MARKER_NAMES) do
-					if marker.Name == markerName then
-						table.insert(markers, id)
-					end
-				end
-			end
-		end
-		table.sort(markers)
-
-		local name = tostring((label and label.Text) or entry.name or "")
-		local color = border and border.Color or nil
-
-		records[index] = {
-			placeId = entry.placeId,
-			key = keyOf(entry.placeId, name),
-			name = name,
-			image = thumbnail and tostring(thumbnail.Image) or "",
-			note = noteValue and tostring(noteValue.Value) or "",
-			markers = markers,
-			color = { color and color.R or 1, color and color.G or 1, color and color.B or 1 },
-			x = entry.x,
-			y = entry.y,
-			exitIndices = {},
-		}
-
-		indexOf[element] = index
-	end
-
-	for index, entry in ipairs(entries) do
-		local exits = entry.instance:FindFirstChild("Exits")
-		if exits then
-			for _, line in ipairs(exits:GetChildren()) do
-				local value = line:FindFirstChild("Exit")
-				local target = value and value.Value
-				if target and indexOf[target] then
-					table.insert(records[index].exitIndices, indexOf[target])
-				end
-			end
-		end
-	end
-
-	return records
-end
-
--- the shape the map tool saves: one entry per square, exits pointing at the
--- other entries by their position in this list
-local function elementsFrom(records)
-	local elements = {}
-
-	for index, record in ipairs(records) do
-		elements[index] = {
-			PlaceId = record.placeId,
-			ScalePosition = { record.x, record.y },
-			Exits = record.exitIndices or {},
-			Color = { record.color[1], record.color[2], record.color[3] },
-			Name = record.name,
-			ImageId = record.image,
-			Markers = record.markers,
-			Note = record.note,
-		}
-	end
-
-	return elements
-end
-
--- the dream library the map keeps beside the squares, so a name or a picture is
--- still there for a dream that is not placed down
-local function buildInventory(records, library)
-	local inventory = {}
-
-	for _, entry in ipairs(library or {}) do
-		inventory[entry.placeId] = {
-			Name = entry.name,
-			ImageId = entry.image,
-			Markers = entry.markers,
-			Note = entry.note,
-		}
-	end
-
-	for _, record in ipairs(records) do
-		local known = inventory[record.placeId]
-		inventory[record.placeId] = {
-			Name = record.name ~= "" and record.name or (known and known.Name or ""),
-			ImageId = record.image ~= "" and record.image or (known and known.ImageId or ""),
-			Markers = #record.markers > 0 and record.markers or (known and known.Markers or {}),
-			Note = record.note ~= "" and record.note or (known and known.Note or ""),
-		}
-	end
-
-	return inventory
-end
-
-local function findSaveRemote()
-	local mapTool = nil
-
-	for _, object in ipairs(Workspace:GetDescendants()) do
-		if object.Name == "MapTool" then
-			mapTool = object
-			break
-		end
-	end
-
-	if not mapTool and LocalPlayer then
-		local backpack = LocalPlayer:FindFirstChild("Backpack")
-		if backpack then
-			mapTool = backpack:FindFirstChild("MapTool")
-		end
-	end
-
-	if not mapTool and LocalPlayer and LocalPlayer.Character then
-		mapTool = LocalPlayer.Character:FindFirstChild("MapTool")
-	end
-
-	return mapTool and mapTool:FindFirstChild("DataRemoteEvent") or nil
-end
-
-local function saveMapData(inventory, elements)
-	local remote = findSaveRemote()
-	if not remote then
-		return false, "could not find MapTool.DataRemoteEvent :: equip the map tool and try again"
-	end
-
-	local ok, problem = pcall(function()
-		remote:FireServer("Save Map Data", inventory, elements)
-	end)
-
-	if not ok then
-		return false, "the map refused the save :: " .. tostring(problem)
-	end
-
-	return true
-end
-
 -- the counter the map shows, so a clear can put it back to 0 every time
 local counterObjects = {}
 
@@ -1113,67 +960,30 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 	local templates, fallback, canvasSize, markerTemplates = collectTemplates(shiftingFrame, mapGui)
 	local exitTemplate = firstExitLine(shiftingFrame)
 	local entranceTemplate = firstEntranceLink(shiftingFrame)
-	local existingCount = #canvasElements(shiftingFrame)
 
-	-- the map is saved as a whole, so what is already on it joins the plan unless
-	-- this is a replace, and then nothing is lost by writing the lot back
-	local plan = {}
-	if not clearFirst then
-		for _, record in ipairs(collectCanvasRecords(shiftingFrame)) do
-			table.insert(plan, record)
-		end
+	local removed = clearFirst and removeAllMapped(shiftingFrame) or 0
+	if not fallback then
+		return 0, 0, #duplicates, removed, 0, "the map library is empty, open the map once so your dreams load"
 	end
 
-	local indexOfRecord = {}
-	for _, record in ipairs(kept) do
-		local copy = cloneRecordAt(record, record.x, record.y)
-		copy.exitIndices = {}
-		table.insert(plan, copy)
-		indexOfRecord[record] = #plan
-	end
-
-	for _, record in ipairs(kept) do
-		local copy = plan[indexOfRecord[record]]
-		for _, reference in ipairs(record.exits) do
-			local targetRecord = resolve[reference]
-			local targetIndex = targetRecord and indexOfRecord[targetRecord]
-			if targetIndex and targetIndex ~= indexOfRecord[record] then
-				table.insert(copy.exitIndices, targetIndex)
-			end
-		end
-	end
-
-	-- dreams that were saved but never placed belong in the library, which is the
-	-- sidebar, so they are carried in the inventory without being dropped onto
-	-- the map as loose squares
-	local libraryOnly = #libraryExtras(records, library)
-
-	-- the map tool's own save takes the whole map at once, which is what carries
-	-- the names, the connection lines and the place count
-	local elements = elementsFrom(plan)
-	local inventory = buildInventory(plan, library)
-	local saved, saveProblem = saveMapData(inventory, elements)
-
-	-- the canvas is rebuilt from the same plan, so what you see is what was saved
-	removeAllMapped(shiftingFrame)
-
-	local elementsByRecord = {}
+	local placed = {}
 	local made = 0
 
-	for _, record in ipairs(plan) do
+	for _, record in ipairs(kept) do
 		local element = createElement(record, shiftingFrame, templates, fallback, canvasSize, markerTemplates)
 		if element then
-			elementsByRecord[record] = element
+			placed[record] = element
 			made = made + 1
 		end
 	end
 
 	local links = 0
-	for _, record in ipairs(plan) do
-		local source = elementsByRecord[record]
+	for _, record in ipairs(kept) do
+		local source = placed[record]
 		if source then
-			for _, targetIndex in ipairs(record.exitIndices or {}) do
-				local target = elementsByRecord[plan[targetIndex]]
+			for _, reference in ipairs(record.exits) do
+				local targetRecord = resolve[reference]
+				local target = targetRecord and placed[targetRecord]
 				if target and target ~= source then
 					if linkExit(source, target, exitTemplate, links + 1) then
 						linkEntrance(target, source, entranceTemplate)
@@ -1184,20 +994,9 @@ local function inject(shiftingFrame, mapGui, records, library, clearFirst)
 		end
 	end
 
-	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+	local extrasMade = 0
 
-	return {
-		made = made,
-		links = links,
-		skipped = #duplicates,
-		libraryOnly = libraryOnly,
-		existing = existingCount,
-		templateMissing = fallback == nil,
-		saved = saved,
-		saveProblem = saveProblem,
-		mapped = mapped,
-		counterUpdated = counterUpdated,
-	}
+	return made, links, #duplicates, removed, extrasMade
 end
 
 local function shortName(path)
@@ -1435,40 +1234,6 @@ local function actionExport()
 	say("export finished :: the newest file is selected")
 end
 
-local function describeInjection(result, replacing)
-	local parts = {}
-
-	if replacing then
-		table.insert(parts, string.format("removed %d squares", result.existing))
-	end
-
-	table.insert(parts, string.format("placed %d squares", result.made))
-	table.insert(parts, string.format("%d connections", result.links))
-
-	if result.libraryOnly > 0 then
-		table.insert(parts, string.format("%d saved dreams kept in the library", result.libraryOnly))
-	end
-	if result.skipped > 0 then
-		table.insert(parts, string.format("skipped %d dupes", result.skipped))
-	end
-
-	if result.saved then
-		table.insert(parts, "saved through the map tool")
-	else
-		table.insert(parts, "NOT saved :: " .. tostring(result.saveProblem))
-	end
-
-	if result.counterUpdated > 0 then
-		table.insert(parts, string.format("counter %d", result.mapped))
-	end
-
-	if result.templateMissing then
-		table.insert(parts, "open the map once so its library loads and the squares can be drawn")
-	end
-
-	return table.concat(parts, " :: ")
-end
-
 local function actionInject()
 	local mapGui, shiftingFrame = canTouchCanvas()
 	if not shiftingFrame then
@@ -1480,8 +1245,34 @@ local function actionInject()
 		return
 	end
 
-	local result = inject(shiftingFrame, mapGui, state.records, state.library, false)
-	say(describeInjection(result, false))
+	local existing = #canvasElements(shiftingFrame)
+	local made, links, skipped, _, extrasMade, problem =
+		inject(shiftingFrame, mapGui, state.records, state.library, false)
+
+	if problem then
+		say(problem)
+		return
+	end
+
+	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+
+	local message = string.format("placed %d squares :: %d connections", made, links)
+	if extrasMade > 0 then
+		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
+	end
+	if skipped > 0 then
+		message = message .. string.format(" :: skipped %d dupes", skipped)
+	end
+	if counterUpdated > 0 then
+		message = message .. string.format(" :: counter shows %d", mapped)
+	else
+		message = message .. " :: could not find the mapped counter"
+	end
+	if existing > 0 then
+		message = message .. " :: the canvas already had squares, replace map swaps them out"
+	end
+
+	say(message)
 	updateDupeButton()
 end
 
@@ -1496,8 +1287,30 @@ local function actionReplace()
 		return
 	end
 
-	local result = inject(shiftingFrame, mapGui, state.records, state.library, true)
-	say(describeInjection(result, true))
+	local made, links, skipped, removed, extrasMade, problem =
+		inject(shiftingFrame, mapGui, state.records, state.library, true)
+
+	if problem then
+		say(problem)
+		return
+	end
+
+	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+
+	local message = string.format("removed %d squares :: placed %d :: %d connections", removed, made, links)
+	if extrasMade > 0 then
+		message = message .. string.format(" :: %d saved dreams from the library", extrasMade)
+	end
+	if skipped > 0 then
+		message = message .. string.format(" :: skipped %d dupes", skipped)
+	end
+	if counterUpdated > 0 then
+		message = message .. string.format(" :: counter shows %d", mapped)
+	else
+		message = message .. " :: could not find the mapped counter"
+	end
+
+	say(message)
 	updateDupeButton()
 end
 
@@ -1511,11 +1324,6 @@ local function actionRemoveAll()
 	-- can be put back to 0 even when its label is not named after counting
 	local showsCount = findCountLabels(mapGui, #canvasElements(shiftingFrame))
 
-	-- the library is kept, only the placed squares go, and the map tool's save is
-	-- told the same thing so the empty map is what loads next time
-	local inventory = buildInventory(collectCanvasRecords(shiftingFrame), state.library)
-	local saved, saveProblem = saveMapData(inventory, {})
-
 	local removed = removeAllMapped(shiftingFrame)
 
 	local zeroed = 0
@@ -1525,16 +1333,9 @@ local function actionRemoveAll()
 		end
 	end
 
-	-- an empty map means the counter reads 0, whether or not the count is worked
-	-- out from the canvas at the time
 	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame, 0)
 
 	local message = string.format("removed %d mapped squares", removed)
-	if saved then
-		message = message .. " :: saved through the map tool"
-	else
-		message = message .. " :: NOT saved :: " .. tostring(saveProblem)
-	end
 	if zeroed + counterUpdated > 0 then
 		message = message .. " :: counter 0"
 	else
@@ -1557,9 +1358,7 @@ local function actionRemoveDupes()
 		return
 	end
 
-	local records = collectCanvasRecords(shiftingFrame)
-	local saved, saveProblem = saveMapData(buildInventory(records, state.library), elementsFrom(records))
-	local mapped, counterUpdated = updateMappedCount(mapGui, shiftingFrame)
+	updateMappedCount(mapGui, shiftingFrame)
 
 	local parts = {}
 	for key, count in pairs(groups) do
@@ -1567,17 +1366,7 @@ local function actionRemoveDupes()
 	end
 	table.sort(parts)
 
-	local message = string.format("removed %d duplicate squares :: kept one of %s", removed, table.concat(parts, " :: "))
-	if saved then
-		message = message .. " :: saved through the map tool"
-	else
-		message = message .. " :: NOT saved :: " .. tostring(saveProblem)
-	end
-	if counterUpdated > 0 then
-		message = message .. string.format(" :: counter %d", mapped)
-	end
-
-	say(message)
+	say(string.format("removed %d duplicate squares :: kept one of %s", removed, table.concat(parts, " :: ")))
 	updateDupeButton()
 end
 
@@ -1595,37 +1384,28 @@ local function findSaveButton(root)
 end
 
 local function actionSave()
-	local mapGui, shiftingFrame = canTouchCanvas()
-	if not shiftingFrame then
+	local mapGui = findMapGui()
+	if not mapGui then
+		say("no map gui :: equip the map tool and open the map once (C)")
 		return
 	end
 
-	local records = collectCanvasRecords(shiftingFrame)
-	local saved, saveProblem = saveMapData(buildInventory(records, state.library), elementsFrom(records))
-
-	if saved then
-		say(string.format("saved %d squares through the map tool", #records))
-		updateMappedCount(mapGui, shiftingFrame)
-		return
-	end
-
-	-- no remote in reach, so fall back to pressing the tool's own save button
 	local button = findSaveButton(mapGui)
 	if not button then
-		say("not saved :: " .. tostring(saveProblem))
+		say("could not find the map's save button :: press it yourself")
 		return
 	end
 
 	if type(firesignal) ~= "function" then
-		say("not saved :: " .. tostring(saveProblem) .. " :: press the map's save button yourself")
+		say("this executor has no firesignal :: press the map's save button yourself")
 		return
 	end
 
 	local pressed = pcall(firesignal, button.MouseButton1Click)
 	if pressed then
-		say("pressed the map's save button instead")
+		say("pressed the map's save button")
 	else
-		say("not saved :: " .. tostring(saveProblem))
+		say("could not press the map's save button :: press it yourself")
 	end
 end
 
